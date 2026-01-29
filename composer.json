@@ -1,0 +1,24 @@
+{
+    "name": "componist/mini-api",
+    "description": "Config-driven Mini API for Laravel – routes, table/model, columns, relations, optional API-Key auth",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Componist\\MiniApi\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Componist\\MiniApi\\MiniApiServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
