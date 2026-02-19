@@ -2,6 +2,7 @@
 
 namespace Componist\MiniApi;
 
+use Componist\MiniApi\Console\GenerateMiniApiConfigFromDatabaseCommand;
 use Componist\MiniApi\Console\GenerateMiniApiKeyCommand;
 use Componist\MiniApi\Http\Controllers\MiniApiBuilderController;
 use Illuminate\Support\Facades\Route;
@@ -55,6 +56,7 @@ class MiniApiServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 GenerateMiniApiKeyCommand::class,
+                GenerateMiniApiConfigFromDatabaseCommand::class,
             ]);
         }
     }
