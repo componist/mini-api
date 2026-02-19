@@ -1,113 +1,190 @@
-# Mini API (componist/mini-api) – Benutzungsanleitung
+# Mini API (componist/mini-api)
 
-Vollständige Anleitung zur Installation, Konfiguration und Nutzung der config-gesteuerten Mini-API für Laravel.
+**Expose your system's data easily—via simple GET requests.**
 
----
-
-## 1. Was ist die Mini API?
-
-Die **Mini API** ist ein schlankes Laravel-Package, das über eine **einzige Config-Datei** REST-artige JSON-Endpoints bereitstellt:
-
-- Du definierst **Route**, **Tabelle oder Eloquent-Model**, **Spalten** und optional **Relationen**.
-- Die API liefert **ausschließlich JSON** (keine HTML-Views).
-- Optional kannst du einen **API-Key** schützen (Header oder Query-Parameter).
-- Ein **Config-Builder** (Web-UI) hilft beim Erzeugen der Config ohne PHP-Syntax.
-
-**Einsatz:** Schnelle Lese-APIs für externe Systeme, Mobile Apps oder Frontends, wenn du keine volle REST-API mit Controllern pro Resource brauchst.
+Config-driven read-only API for Laravel: GET only, maximum flexibility through configuration.
 
 ---
 
-## 2. Installation
+## Purpose
 
-### 2.1 Package einbinden
+This package was built to **expose data from a system**—simply and with minimal effort:
 
-**Über Composer (Packagist):**
+- You want to make certain data (tables, models) **available to other systems, apps, or frontends**.
+- Instead of writing controllers and routes for each resource, you define in **one config file** what is returned as JSON under which URL.
+- The API deliberately limits itself to **simple GET requests**: no write access, no complex REST logic—just **expose and read data**.
+
+Typical use cases: providing data to external partners, feeding mobile apps or frontends with read-only data, small export or feed interfaces without extra code.
+
+---
+
+## Important: GET only (read-only)
+
+The Mini API is intentionally **read-only**:
+
+- **Only the HTTP method GET is supported.**  
+  There are no POST, PUT, PATCH, or DELETE endpoints.
+- Each configured endpoint returns data as **JSON**; **no data is modified**.
+- Ideal for: fetching data by external systems, mobile apps, frontends, feeds, or simple export interfaces—without write access to the database.
+
+If you need a full REST API with Create/Update/Delete, use Laravel API Resources or your own controllers. The Mini API does not replace them—it exists solely to **expose a system's data via simple GET requests**.
+
+---
+
+## What is the Mini API?
+
+The **Mini API** is a lean Laravel package that provides JSON endpoints through **a single config file**:
+
+- You define **route**, **table or Eloquent model**, **columns**, and optionally **relations**.
+- The API responds **only with JSON** (no HTML views).
+- Optionally, an **API key** protects the endpoints (header or query parameter).
+- A **Config Builder** (web UI) generates the config without writing PHP.
+
+**Use case:** Expose a system's data simply and in a controlled way—for external systems, mobile apps, or frontends—without a full REST API and without write operations.
+
+---
+
+## Features at a glance
+
+| Feature                           | Description                                                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------ |
+| **GET only**                      | All endpoints are reachable only via GET; no write operations.                                                          |
+| **Config-driven**                 | No dedicated controller per endpoint—everything in `config/mini-api.php`.                                               |
+| **Table or model**                | Data source: **Query Builder** (table + columns) or **Eloquent model** (including relations).                           |
+| **Column selection**              | Per endpoint, define exactly which columns are returned (e.g. excluding `password`).                                    |
+| **Eloquent relations**            | With a model: eager loading via `relations` (e.g. `company`, `company.country`).                                        |
+| **Relations with columns**        | Relations can be limited to specific columns: `'applications' => ['id', 'status']`.                                     |
+| **Joins without model**           | Without Eloquent: joins (including left join) with `foreign_key`, `columns`, and optional **alias** for nested objects. |
+| **Alias for joins**               | Join columns can be grouped into a nested object (e.g. `company: { name, slug }`).                                      |
+| **API key auth**                  | Optional: access only with a valid key (header `X-Api-Key` or query `api_key`).                                         |
+| **Auth per endpoint**             | Global API key or per-endpoint key (endpoint config overrides global).                                                  |
+| **Artisan: generate key**         | `php artisan mini-api:generate-key`—generates a key and writes it to `.env` (options: `--show`, `--force`, `--length`). |
+| **Config from database**          | `php artisan mini-api:config-from-database`—generates endpoints from all tables (options: `--exclude`, `--columns=list  | all`). |
+| **Config Builder (web UI)**       | UI to build endpoint configs: pick tables/columns/models/relations, preview, copy, or write directly to config.         |
+| **Multiple endpoints in builder** | Collect endpoints and add them together to `config/mini-api.php`.                                                       |
+| **MySQL, SQLite, PostgreSQL**     | Support for common Laravel database drivers (including for builder and config-from-database).                           |
+| **JSON response**                 | Always `Content-Type: application/json`; 200 (data), 401 (invalid key), 404 (unknown endpoint).                         |
+
+---
+
+## Quick setup
+
+1. **Install the package**
+
+   ```bash
+   composer require componist/mini-api
+   ```
+
+2. **Publish the config**
+
+   ```bash
+   php artisan vendor:publish --tag=mini-api-config
+   ```
+
+   This creates `config/mini-api.php` in your project.
+
+3. **Generate endpoint config from database (optional)**  
+   Pre-configure endpoints for all tables:
+   ```bash
+   php artisan mini-api:config-from-database
+   ```
+   Options: `--exclude=tables` to exclude tables, `--columns=list|all` for column selection. Then review and adjust the generated config in `config/mini-api.php`.
+
+---
+
+## Installation
+
+### Add the package
+
+**Via Composer (Packagist):**
+
 ```bash
 composer require componist/mini-api
 ```
 
-**Als lokales Package (z. B. im Monorepo):** In der `composer.json` des Projekts:
+**As a local package (e.g. in a monorepo):** In your project's `composer.json`:
+
 ```json
 {
-    "repositories": [
-        { "type": "path", "url": "packages/mini-api" }
-    ],
-    "require": {
-        "componist/mini-api": "*"
-    }
+  "repositories": [{ "type": "path", "url": "packages/mini-api" }],
+  "require": {
+    "componist/mini-api": "*"
+  }
 }
 ```
 
-Dann:
+Then:
+
 ```bash
 composer update
 ```
 
-### 2.2 Config ins Projekt übernehmen (empfohlen)
+### Publish the config (recommended)
 
-Damit du Endpoints anpassen kannst, die Config aus dem Package ins Projekt kopieren:
+To customize endpoints, copy the package config into your project:
+
 ```bash
 php artisan vendor:publish --tag=mini-api-config
 ```
 
-Es wird `config/mini-api.php` angelegt (oder überschrieben). Ohne Publish nutzt die App die Default-Config aus dem Package; eigene Endpoints trägst du dann in der **publizierten** `config/mini-api.php` ein.
+This creates (or overwrites) `config/mini-api.php`. Without publishing, the app uses the default config from the package; add your own endpoints in the **published** `config/mini-api.php`.
 
 ---
 
-## 3. Konfiguration
+## Configuration
 
-Die zentrale Datei ist **`config/mini-api.php`** (nach Publish in deinem Projekt, sonst die Package-Config).
+The central file is **`config/mini-api.php`** (in your project after publishing, otherwise the package config).
 
-### 3.0 Benötigte `.env`-Variablen
+### Required `.env` variables
 
-Die Mini API benötigt **keine** Pflicht-Variablen in der `.env`. Du ergänzt sie nur, wenn du Features aktivieren willst:
+The Mini API does **not** require any mandatory `.env` variables. You only add them when you want to enable features:
 
-| Zweck | Variable | Beispiel |
-|------|----------|----------|
-| API-Key-Schutz aktivieren | `MINI_API_AUTH_ENABLED` | `true` |
-| API-Key setzen | `MINI_API_KEY` | `dein-geheimer-key` |
-| Builder aktivieren (Dev) | `MINI_API_BUILDER_ENABLED` | `true` |
-| Builder nur im Debug | `MINI_API_BUILDER_ONLY_DEV` | `true` |
+| Purpose                   | Variable                    | Example           |
+| ------------------------- | --------------------------- | ----------------- |
+| Enable API key protection | `MINI_API_AUTH_ENABLED`     | `true`            |
+| Set API key               | `MINI_API_KEY`              | `your-secret-key` |
+| Enable builder (dev)      | `MINI_API_BUILDER_ENABLED`  | `true`            |
+| Builder only in debug     | `MINI_API_BUILDER_ONLY_DEV` | `true`            |
 
-Hinweis: `MINI_API_BUILDER_ONLY_DEV` ist standardmäßig `true` in der Config. Wenn du ihn explizit in der `.env` setzt, überschreibst du den Default. `APP_DEBUG=true` muss zusätzlich aktiv sein, damit der Builder erreichbar ist.
+Note: `MINI_API_BUILDER_ONLY_DEV` defaults to `true` in the config. If you set it explicitly in `.env`, you override that default. `APP_DEBUG=true` must also be set for the builder to be reachable.
 
-**Fertige `.env`-Vorlage (mit Defaults):**
+**Sample `.env` snippet (with defaults):**
 
 ```env
-# Mini API (Defaults)
+# Mini API (defaults)
 MINI_API_AUTH_ENABLED=false
 MINI_API_KEY=
 MINI_API_BUILDER_ENABLED=true
 MINI_API_BUILDER_ONLY_DEV=true
 ```
 
-### 3.1 Aufbau
+### Config structure
 
-| Bereich      | Bedeutung |
-|-------------|-----------|
-| `auth`      | Optional: API-Key-Schutz (global). |
-| `endpoints` | Array aller API-Endpoints (Route, Tabelle/Model, Spalten, ggf. Relationen). |
-| `builder`   | Einstellungen für den Config-Builder (nur Dev). |
+| Section     | Meaning                                                                       |
+| ----------- | ----------------------------------------------------------------------------- |
+| `auth`      | Optional: API key protection (global).                                        |
+| `endpoints` | Array of all API endpoints (route, table/model, columns, optional relations). |
+| `builder`   | Settings for the Config Builder (dev only).                                   |
 
-### 3.2 Endpoints definieren
+### Defining endpoints
 
-Jeder Eintrag unter `endpoints` wird zu einer **GET**-Route:  
-`/api/<route>` → JSON mit den konfigurierten Daten.
+Each entry under `endpoints` becomes **one GET route**:  
+`GET /api/<route>` → JSON with the configured data.
 
-**Pflichtangaben pro Endpoint:**
+**Required per endpoint:**
 
-- **`route`** – URL-Teil nach `/api/` (z. B. `users` → `GET /api/users`).
-- **`table`** ODER **`model`** – Datenquelle (Tabelle = Query Builder, Model = Eloquent).
-- **`columns`** – Array der Spalten (bei Model optional, Standard `['*']`).
+- **`route`** – URL segment after `/api/` (e.g. `users` → `GET /api/users`).
+- **`table`** OR **`model`** – Data source (table = Query Builder, model = Eloquent).
+- **`columns`** – Array of columns (optional for model, default `['*']`).
 
-**Optionen:**
+**Options:**
 
-- **`relations`** – bei **Model**: Eloquent-Relationen (z. B. `['company', 'company.country']`); bei **table**: Joins (Array mit `type`, `table`, `foreign_key`, `columns`, ggf. `alias`).
-- **`auth`** – optional: eigener API-Key nur für diesen Endpoint (überschreibt globales `auth`).
+- **`relations`** – With **model**: Eloquent relation names (e.g. `['company', 'company.country']`); with **table**: joins (array with `type`, `table`, `foreign_key`, `columns`, optional `alias`).
+- **`auth`** – Optional: per-endpoint API key (overrides global `auth`).
 
 ---
 
-### 3.3 Beispiel: Nur Tabelle (Query Builder)
+### Example: Table only (Query Builder)
 
 ```php
 'endpoints' => [
@@ -119,12 +196,12 @@ Jeder Eintrag unter `endpoints` wird zu einer **GET**-Route:
 ],
 ```
 
-- **Aufruf:** `GET /api/users`
-- **Antwort:** JSON-Array mit Objekten, die nur diese Spalten haben (z. B. ohne `password`).
+- **Request:** `GET /api/users`
+- **Response:** JSON array of objects with only these columns (e.g. without `password`).
 
 ---
 
-### 3.4 Beispiel: Eloquent-Model mit Relationen
+### Example: Eloquent model with relations
 
 ```php
 'endpoints' => [
@@ -137,23 +214,23 @@ Jeder Eintrag unter `endpoints` wird zu einer **GET**-Route:
 ],
 ```
 
-- **Aufruf:** `GET /api/job-offers`
-- **Antwort:** JSON mit verschachtelten Objekten `company` und `company.country` (Eager Loading).
+- **Request:** `GET /api/job-offers`
+- **Response:** JSON with nested objects `company` and `company.country` (eager loaded).
 
-Relationen können auch mit Spalten-Einschränkung angegeben werden:
+Relations can also be limited to specific columns:
 
 ```php
 'relations' => [
     'company',
-    'applications' => ['id', 'status'],  // nur diese Spalten der Relation
+    'applications' => ['id', 'status'],  // only these columns for the relation
 ],
 ```
 
 ---
 
-### 3.5 Beispiel: Joins (ohne Model)
+### Example: Joins (without model)
 
-Wenn du keine Eloquent-Models nutzen willst, kannst du mit **Joins** verknüpfte Tabellen einbinden:
+If you don't use Eloquent models, you can use **joins** to include related tables:
 
 ```php
 'job_offers' => [
@@ -166,7 +243,7 @@ Wenn du keine Eloquent-Models nutzen willst, kannst du mit **Joins** verknüpfte
             'table'        => 'companies',
             'foreign_key'  => 'company_id',
             'columns'      => ['name as company_name', 'slug as company_slug'],
-            'alias'        => 'company',   // optional: Unterobjekt im JSON
+            'alias'        => 'company',   // optional: nested object in JSON
         ],
         [
             'type'         => 'left_join',
@@ -178,24 +255,24 @@ Wenn du keine Eloquent-Models nutzen willst, kannst du mit **Joins** verknüpfte
 ],
 ```
 
-- **Ohne `alias`:** Spalten erscheinen flach (z. B. `company_name`, `company_slug`).
-- **Mit `alias`:** Spalten werden in ein Unterobjekt gepackt (z. B. `company: { company_name, company_slug }`).
+- **Without `alias`:** Columns appear at the top level (e.g. `company_name`, `company_slug`).
+- **With `alias`:** Columns are grouped into a nested object (e.g. `company: { company_name, company_slug }`).
 
 ---
 
-### 3.6 API-Key (Auth)
+### API key (auth)
 
-Wenn die API nur mit gültigem Key erreichbar sein soll:
+To allow API access only with a valid key:
 
-**1. Key erzeugen und in `.env` eintragen:**
+**1. Generate key and add to `.env`:**
 
 ```bash
 php artisan mini-api:generate-key
 ```
 
-Der Befehl schreibt `MINI_API_KEY=<generierter-Key>` in die `.env`. Beim ersten Mal wird zudem `MINI_API_AUTH_ENABLED=true` gesetzt.
+The command writes `MINI_API_KEY=<generated-key>` to `.env`. On first run it also sets `MINI_API_AUTH_ENABLED=true`.
 
-**2. In der Config (bereits Standard nach Publish):**
+**2. In the config (already the default after publishing):**
 
 ```php
 'auth' => [
@@ -206,177 +283,206 @@ Der Befehl schreibt `MINI_API_KEY=<generierter-Key>` in die `.env`. Beim ersten 
 ],
 ```
 
-- **`enabled`** und **`key`** gesetzt → jeder Request muss den Key mitliefern.
-- **Key per Header:** z. B. `X-Api-Key: dein-geheimer-key`.
-- **Key per Query:** z. B. `GET /api/users?api_key=dein-geheimer-key`.
-- Reihenfolge: Zuerst Header, falls nicht vorhanden dann Query.
+- **`enabled`** and **`key`** set → every request must include the key.
+- **Key via header:** e.g. `X-Api-Key: your-secret-key`.
+- **Key via query:** e.g. `GET /api/users?api_key=your-secret-key`.
+- Order: header is checked first, then query if header is missing.
 
-**Bei falschem oder fehlendem Key:** Antwort **401 Unauthorized** mit `{"error": "Invalid or missing API key"}`.
+**On invalid or missing key:** Response **401 Unauthorized** with `{"error": "Invalid or missing API key"}`.
 
-**Pro Endpoint anderes Auth:** Ein Endpoint kann eigenes `auth` haben (z. B. anderer Key), das mit dem globalen `auth` zusammengeführt wird; Endpoint-Config hat Vorrang.
-
----
-
-## 4. API aufrufen
-
-### 4.1 URLs
-
-- Basis: **`/api/`** + der in der Config angegebene **`route`**-Wert.
-- Nur **GET** wird unterstützt (Lesen der konfigurierten Daten).
-
-Beispiele (wenn `route` = `users` bzw. `job-offers`):
-
-- `GET https://deine-domain.de/api/users`
-- `GET https://deine-domain.de/api/job-offers`
-
-### 4.2 Ohne API-Key
-
-```bash
-curl -X GET "https://deine-domain.de/api/users"
-```
-
-### 4.3 Mit API-Key (Header)
-
-```bash
-curl -X GET "https://deine-domain.de/api/users" \
-  -H "X-Api-Key: dein-geheimer-key"
-```
-
-### 4.4 Mit API-Key (Query-Parameter)
-
-```bash
-curl "https://deine-domain.de/api/users?api_key=dein-geheimer-key"
-```
-
-### 4.5 Antwortformat
-
-- **Erfolg (200):** JSON-Array von Objekten mit den konfigurierten Spalten (und Relationen).
-- **401:** API-Key fehlt oder ist falsch → `{"error": "Invalid or missing API key"}`.
-- **404:** Unbekannter Endpoint (Route nicht in `endpoints` oder Config ungültig).
+**Different auth per endpoint:** An endpoint can have its own `auth` (e.g. different key), merged with global `auth`; endpoint config takes precedence.
 
 ---
 
-## 5. API-Key generieren (Artisan)
+## Calling the API (GET only)
 
-Befehl: **`php artisan mini-api:generate-key`**
+### URLs
 
-| Option     | Bedeutung |
-|------------|-----------|
-| (keine)    | Neuen Key erzeugen und in `.env` eintragen. Existiert `MINI_API_KEY` bereits, Fehler ohne `--force`. |
-| `--show`  | Key nur in der Konsole ausgeben, **nicht** in `.env` schreiben. |
-| `--force` | Vorhandenen `MINI_API_KEY` in `.env` überschreiben. |
-| `--length=64` | Länge des Keys (32–128 Zeichen). |
+- Base: **`/api/`** + the **`route`** value from the config.
+- **Only GET** is supported—reading the configured data. POST, PUT, PATCH, DELETE are not supported and result in 405 or are handled differently by Laravel.
 
-**Beispiele:**
+Examples (when `route` is `users` or `job-offers`):
+
+- `GET https://your-domain.com/api/users`
+- `GET https://your-domain.com/api/job-offers`
+
+### Without API key
 
 ```bash
-# Key erzeugen und in .env schreiben (beim ersten Mal + MINI_API_AUTH_ENABLED=true)
+curl -X GET "https://your-domain.com/api/users"
+```
+
+### With API key (header)
+
+```bash
+curl -X GET "https://your-domain.com/api/users" \
+  -H "X-Api-Key: your-secret-key"
+```
+
+### With API key (query parameter)
+
+```bash
+curl "https://your-domain.com/api/users?api_key=your-secret-key"
+```
+
+### Response format
+
+- **Success (200):** JSON array of objects with the configured columns (and relations).
+- **401:** API key missing or invalid → `{"error": "Invalid or missing API key"}`.
+- **404:** Unknown endpoint (route not in `endpoints` or invalid config).
+
+---
+
+## Artisan commands
+
+### Generate API key: `mini-api:generate-key`
+
+| Option        | Meaning                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| (none)        | Generate new key and add to `.env`. If `MINI_API_KEY` already exists, command fails unless `--force`. |
+| `--show`      | Output key to console only, **do not** write to `.env`.                                               |
+| `--force`     | Overwrite existing `MINI_API_KEY` in `.env`.                                                          |
+| `--length=64` | Key length (32–128 characters).                                                                       |
+
+**Examples:**
+
+```bash
+# Generate key and write to .env (first run also sets MINI_API_AUTH_ENABLED=true)
 php artisan mini-api:generate-key
 
-# Key nur anzeigen (z. B. zum manuellen Eintragen)
+# Show key only (e.g. for manual entry)
 php artisan mini-api:generate-key --show
 
-# Bestehenden Key ersetzen
+# Replace existing key
 php artisan mini-api:generate-key --force
 
-# Länge anpassen
+# Custom length
 php artisan mini-api:generate-key --length=128
 ```
 
 ---
 
-## 6. Config-Builder (Web-UI)
+### Generate config from database: `mini-api:config-from-database`
 
-Der **Config-Builder** ist eine Weboberfläche, mit der du Endpoint-Configs per Klick erzeugst (Tabellen/Spalten/Relationen wählen, PHP-Array anzeigen oder direkt in `config/mini-api.php` schreiben).
+Generates endpoint entries in `config/mini-api.php` for **all tables** in the current database. Useful to quickly have many GET endpoints without writing them by hand.
 
-### 6.1 Builder aktivieren
+| Option           | Meaning                                                             |
+| ---------------- | ------------------------------------------------------------------- |
+| `--exclude=`     | Exclude tables (comma-separated, e.g. `migrations,sessions,cache`). |
+| `--columns=list` | Per table, list all column names as array (default).                |
+| `--columns=all`  | Per table, use `['*']` (all columns).                               |
 
-In der **`.env`** (nur für Entwicklung empfohlen):
+**Prerequisite:** `config/mini-api.php` must exist (e.g. after `php artisan vendor:publish --tag=mini-api-config`).
+
+**Examples:**
+
+```bash
+# All tables as endpoints, columns listed
+php artisan mini-api:config-from-database
+
+# Exclude specific tables
+php artisan mini-api:config-from-database --exclude=migrations,sessions,jobs,failed_jobs
+
+# All columns with [*]
+php artisan mini-api:config-from-database --columns=all
+```
+
+Supported databases: MySQL, SQLite, PostgreSQL (and others if Laravel's schema API provides table names).
+
+---
+
+## Config Builder (web UI)
+
+The **Config Builder** is a web UI to create endpoint configs with a few clicks (select tables/columns/relations, show PHP array, or write directly to `config/mini-api.php`).
+
+### Enable the builder
+
+In **`.env`** (recommended for development only):
 
 ```env
 MINI_API_BUILDER_ENABLED=true
 APP_DEBUG=true
 ```
 
-Ist `MINI_API_BUILDER_ONLY_DEV=true` (Standard), ist der Builder nur bei `APP_DEBUG=true` erreichbar.
+If `MINI_API_BUILDER_ONLY_DEV=true` (default), the builder is only reachable when `APP_DEBUG=true`.
 
-### 6.2 Builder aufrufen
+### Open the builder
 
-Im Browser die konfigurierte Route aufrufen (Standard):
+In your browser, open the configured route (default):
 
 **`/mini-api-builder`**
 
-(z. B. `http://localhost:8000/mini-api-builder`)
+(e.g. `http://localhost:8000/mini-api-builder`)
 
-Die Route ist in `config/mini-api.php` unter `builder.route` änderbar.
+The route can be changed in `config/mini-api.php` under `builder.route`.
 
-### 6.3 Ablauf im Builder
+### Builder workflow
 
-1. **Tabelle wählen** – Liste aller Datenbanktabellen (nur echte Tabellen, keine Views).
-2. **Spalten** – Checkboxen für die Spalten; „Alle auswählen“ / „Alle abwählen“.
-3. **Optional: Model** – Falls ein Eloquent-Model zur Tabelle existiert, kannst du es auswählen (dann sind Relationen möglich).
-4. **Optional: Relationen** – Bei gewähltem Model: Relationen als Checkboxen (inkl. verschachtelt, z. B. `company.country`).
-5. **Endpoint-Key & Route** – Config-Key (z. B. `users`) und API-Pfad (z. B. `users` → `/api/users`).
-6. **Aktionen:**
-   - **Endpoint zur Liste hinzufügen** – aktuellen Endpoint in eine Liste legen (für mehrere Endpoints).
-   - **Vorschau** – erzeugtes PHP-Array anzeigen.
-   - **Kopieren** – PHP-Array in die Zwischenablage.
-   - **In Config schreiben** – Endpoint(s) in `config/mini-api.php` eintragen (nur wenn die Config bereits publiziert wurde).
+1. **Select table** – List of all database tables (real tables only, no views).
+2. **Columns** – Checkboxes for columns; “Select all” / “Deselect all”.
+3. **Optional: Model** – If an Eloquent model exists for the table, you can select it (then relations are available).
+4. **Optional: Relations** – With a model selected: relations as checkboxes (including nested, e.g. `company.country`).
+5. **Endpoint key & route** – Config key (e.g. `users`) and API path (e.g. `users` → `/api/users`).
+6. **Actions:**
+   - **Add endpoint to list** – Add current endpoint to a list (for multiple endpoints).
+   - **Preview** – Show generated PHP array.
+   - **Copy** – Copy PHP array to clipboard.
+   - **Write to config** – Insert endpoint(s) into `config/mini-api.php` (only if config was already published).
 
-**Mehrere Endpoints:** Konfiguration für den ersten Endpoint auswählen → „Zur Liste hinzufügen“ → nächste Tabelle/Spalten/Route wählen → wieder „Zur Liste hinzufügen“ → am Ende „In Config schreiben“ für alle.
+**Multiple endpoints:** Configure the first endpoint → “Add to list” → choose next table/columns/route → “Add to list” again → finally “Write to config” for all.
 
-### 6.4 Hinweis
+### Note
 
-Der Builder schreibt nur in eine **bereits vorhandene** `config/mini-api.php` (z. B. nach `php artisan vendor:publish --tag=mini-api-config`). Existiert die Datei nicht, erscheint eine Fehlermeldung; du kannst die **Vorschau** nutzen und den Inhalt manuell in die Config übernehmen.
-
----
-
-## 7. Übersicht Konfigurationsoptionen
-
-### 7.1 Global: `auth`
-
-| Schlüssel   | Bedeutung |
-|------------|-----------|
-| `enabled`  | `true` = API-Key prüfen. |
-| `key`      | Erwarteter Key (z. B. aus `env('MINI_API_KEY')`). |
-| `header`   | HTTP-Header für den Key (Standard: `X-Api-Key`). |
-| `query`    | Query-Parameter für den Key (Standard: `api_key`). |
-
-### 7.2 Pro Endpoint
-
-| Schlüssel    | Pflicht? | Bedeutung |
-|-------------|----------|-----------|
-| `route`    | ja       | URL-Pfad nach `/api/`. |
-| `table`    | ja*      | Datenbanktabelle (*wenn kein `model`). |
-| `model`    | ja*      | Eloquent-Model-Klasse (*wenn keine `table`). |
-| `columns`  | nein     | Spalten-Array; bei Model Standard `['*']`. |
-| `relations`| nein     | Eloquent: Relation-Namen (inkl. Punkt für verschachtelt); Joins: Array mit `type`, `table`, `foreign_key`, `columns`, optional `alias`. |
-| `auth`     | nein     | Eigenes Auth für diesen Endpoint (überschreibt global). |
-
-### 7.3 Builder: `builder`
-
-| Schlüssel   | Bedeutung |
-|------------|-----------|
-| `enabled`  | Builder-Route und APIs aktivieren. |
-| `only_dev` | `true` = nur bei `APP_DEBUG=true` erreichbar. |
-| `route`    | URL-Pfad des Builders (z. B. `mini-api-builder`). |
+The builder only writes to an **existing** `config/mini-api.php` (e.g. after `php artisan vendor:publish --tag=mini-api-config`). If the file does not exist, an error is shown; you can use **Preview** and copy the content into the config manually.
 
 ---
 
-## 8. Kurzreferenz
+## Configuration options reference
 
-| Ziel | Aktion |
-|------|--------|
-| Package einbinden | `composer require componist/mini-api` bzw. path-Repo + `composer update` |
-| Config anpassen | `php artisan vendor:publish --tag=mini-api-config` |
-| Endpoints definieren | In `config/mini-api.php` unter `endpoints` eintragen |
-| API aufrufen | `GET /api/<route>` (optional Header `X-Api-Key` oder `?api_key=...`) |
-| API-Key erzeugen | `php artisan mini-api:generate-key` (Optionen: `--show`, `--force`, `--length=64`) |
-| Config per UI bauen | `.env`: `MINI_API_BUILDER_ENABLED=true`, dann `/mini-api-builder` im Browser |
+### Global: `auth`
+
+| Key       | Meaning                                           |
+| --------- | ------------------------------------------------- |
+| `enabled` | `true` = require API key.                         |
+| `key`     | Expected key (e.g. from `env('MINI_API_KEY')`).   |
+| `header`  | HTTP header for the key (default: `X-Api-Key`).   |
+| `query`   | Query parameter for the key (default: `api_key`). |
+
+### Per endpoint
+
+| Key         | Required? | Meaning                                                                                                                             |
+| ----------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `route`     | yes       | URL path after `/api/` (GET only).                                                                                                  |
+| `table`     | yes\*     | Database table (\*if no `model`).                                                                                                   |
+| `model`     | yes\*     | Eloquent model class (\*if no `table`).                                                                                             |
+| `columns`   | no        | Array of columns; for model default is `['*']`.                                                                                     |
+| `relations` | no        | Eloquent: relation names (including dot for nested); Joins: array with `type`, `table`, `foreign_key`, `columns`, optional `alias`. |
+| `auth`      | no        | Per-endpoint auth (overrides global).                                                                                               |
+
+### Builder: `builder`
+
+| Key        | Meaning                                            |
+| ---------- | -------------------------------------------------- |
+| `enabled`  | Enable builder route and APIs.                     |
+| `only_dev` | `true` = only reachable when `APP_DEBUG=true`.     |
+| `route`    | URL path of the builder (e.g. `mini-api-builder`). |
 
 ---
 
-## 9. Weitere Dokumentation
+## Quick reference
 
-- **[KONZEPT.md](KONZEPT.md)** – Technisches Konzept, Config-Schema, Relationen (Joins/Eloquent), Auth.
-- **[KONZEPT-STATUS.md](KONZEPT-STATUS.md)** – Umsetzungsstand Konzept vs. Implementierung.
+| Goal                       | Action                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------- | ----- |
+| Add package                | `composer require componist/mini-api` or path repo + `composer update`             |
+| Customize config           | `php artisan vendor:publish --tag=mini-api-config`                                 |
+| Define endpoints           | Add entries under `endpoints` in `config/mini-api.php`                             |
+| Call API (GET only)        | `GET /api/<route>` (optional header `X-Api-Key` or `?api_key=...`)                 |
+| Generate API key           | `php artisan mini-api:generate-key` (options: `--show`, `--force`, `--length=64`)  |
+| Generate endpoints from DB | `php artisan mini-api:config-from-database` (options: `--exclude`, `--columns=list | all`) |
+| Build config via UI        | `.env`: `MINI_API_BUILDER_ENABLED=true`, then open `/mini-api-builder` in browser  |
+
+---
+
+## License
+
+MIT (see [LICENSE](LICENSE)).
