@@ -159,7 +159,7 @@ class MiniApiBuilderController extends Controller
             if (! empty($ep['relations'])) {
                 $endpoint['relations'] = $ep['relations'];
             }
-            $blocks[] = "        '" . addslashes($key) . "' => " . $this->exportArray($endpoint);
+            $blocks[] = "        '" . $this->escapePhpSingleQuotedString($key) . "' => " . $this->exportArray($endpoint);
         }
         $newBlock = "\n        " . implode(",\n        ", $blocks) . ",\n    ],";
 
@@ -297,19 +297,33 @@ class MiniApiBuilderController extends Controller
         return preg_replace('/[^a-zA-Z0-9_]/', '', $table) ?: 'users';
     }
 
+    /**
+     * String für PHP single-quoted Literal escapen (nur \ und ').
+     */
+    protected function escapePhpSingleQuotedString(string $s): string
+    {
+        return str_replace(['\\', "'"], ['\\\\', "\\'"], $s);
+    }
+
     protected function exportArray(array $arr): string
     {
         $parts = [];
         foreach ($arr as $k => $v) {
-            $key = is_string($k) ? "'" . addslashes($k) . "'" : $k;
+            $key = is_string($k) ? "'" . $this->escapePhpSingleQuotedString($k) . "'" : $k;
             if (is_array($v)) {
                 $val = $this->exportArray($v);
                 $parts[] = $key . ' => ' . $val;
+            } elseif ($v === null) {
+                $parts[] = $key . ' => null';
+            } elseif (is_bool($v)) {
+                $parts[] = $key . ' => ' . ($v ? 'true' : 'false');
+            } elseif (is_string($v)) {
+                $parts[] = $key . " => '" . $this->escapePhpSingleQuotedString($v) . "'";
             } else {
-                $val = is_string($v) ? "'" . addslashes($v) . "'" : (is_bool($v) ? ($v ? 'true' : 'false') : $v);
-                $parts[] = $key . ' => ' . $val;
+                $parts[] = $key . ' => ' . $v;
             }
         }
+
         return '[' . implode(', ', $parts) . ']';
     }
 }

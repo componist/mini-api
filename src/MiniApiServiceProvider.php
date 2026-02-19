@@ -16,13 +16,14 @@ class MiniApiServiceProvider extends ServiceProvider
             __DIR__ . '/../config/mini-api.php',
             'mini-api'
         );
+        // API-Routen in register() laden, damit sie vor Catch-all-Routen (z. B. api-manager) registriert werden
+        $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
     }
 
     public function boot(): void
     {
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'mini-api');
         $this->registerCommands();
-        $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
         $this->registerBuilderRoutes();
 
         if ($this->app->runningInConsole()) {

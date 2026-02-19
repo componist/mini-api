@@ -2,6 +2,7 @@
 
 namespace Componist\MiniApi\Http\Controllers;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -9,6 +10,9 @@ use Illuminate\Support\Facades\DB;
 
 class MiniApiController extends Controller
 {
+    /** Erlaubte Zeichen für Tabellen-/Spaltennamen (Identifier). */
+    private const SAFE_IDENTIFIER_PATTERN = '/^[a-zA-Z0-9_.\s]+$/';
+
     public function show(Request $request, string $endpoint): JsonResponse
     {
         $config = config("mini-api.endpoints.{$endpoint}");
@@ -26,56 +30,163 @@ class MiniApiController extends Controller
             }
         }
 
-        $columns = $config['columns'] ?? ['*'];
+        try {
+            $columns = $config['columns'] ?? ['*'];
+            if (! is_array($columns) || $columns === []) {
+                $columns = ['*'];
+            }
 
-        if (isset($config['model'])) {
-            $query = $config['model']::query()
-                ->select($columns);
-            $relations = $this->normalizeRelations($config['relations'] ?? []);
-            if (! empty($relations)) {
-                $query->with($relations);
+            if (isset($config['model'])) {
+                return $this->respondWithModel($config, $columns);
             }
-            $data = $query->get();
-        } else {
-            $table = $config['table'];
-            $query = DB::table($table)->select($columns);
-            $relations = $config['relations'] ?? [];
-            foreach ($relations as $rel) {
-                if (is_array($rel)) {
-                    $mainTable = $table;
-                    $type = $rel['type'] ?? 'join';
-                    $joinTable = $rel['table'];
-                    $foreignKey = $rel['foreign_key'] ?? null;
-                    $relColumns = $rel['columns'] ?? [];
-                    if (! $foreignKey) {
-                        continue;
-                    }
-                    if ($type === 'left_join') {
-                        $query->leftJoin(
-                            $joinTable,
-                            "{$mainTable}.{$foreignKey}",
-                            '=',
-                            "{$joinTable}.id"
-                        );
-                    } else {
-                        $query->join(
-                            $joinTable,
-                            "{$mainTable}.{$foreignKey}",
-                            '=',
-                            "{$joinTable}.id"
-                        );
-                    }
-                    foreach ($relColumns as $col) {
-                        $query->addSelect(DB::raw($col));
-                    }
-                }
-            }
-            $data = $query->get();
-            // Optional: bei alias Unterobjekte bilden
-            $data = $this->groupJoinAliases($data, $relations);
+
+            return $this->respondWithTable($config, $columns);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json(
+                ['error' => 'An error occurred while fetching data.'],
+                500
+            );
+        }
+    }
+
+    /**
+     * Daten über Eloquent-Model auslesen und als JSON liefern.
+     *
+     * @param  array<string, mixed>  $config
+     * @param  array<int, string>  $columns
+     */
+    protected function respondWithModel(array $config, array $columns): JsonResponse
+    {
+        $modelClass = $config['model'];
+        if (! is_string($modelClass) || ! class_exists($modelClass) || ! is_subclass_of($modelClass, Model::class)) {
+            return response()->json(['error' => 'Invalid or missing model configuration.'], 500);
+        }
+
+        $query = $modelClass::query()->select($columns);
+        $relations = $this->normalizeRelations($config['relations'] ?? []);
+        if (! empty($relations)) {
+            $query->with($relations);
+        }
+        $data = $query->get();
+
+        // Nur konfigurierte Spalten ausgeben (Relationen bleiben erhalten)
+        if ($columns !== ['*']) {
+            $allowedKeys = array_flip($columns);
+            $data = $data->map(function (Model $model) use ($allowedKeys) {
+                $arr = $model->toArray();
+                $main = array_intersect_key($arr, $allowedKeys);
+                $relations = array_diff_key($arr, $allowedKeys);
+                return array_merge($main, $relations);
+            });
         }
 
         return response()->json($data);
+    }
+
+    /**
+     * Daten über Query Builder (Tabelle + optionale Joins) auslesen und als JSON liefern.
+     *
+     * @param  array<string, mixed>  $config
+     * @param  array<int, string>  $columns
+     */
+    protected function respondWithTable(array $config, array $columns): JsonResponse
+    {
+        $table = $this->sanitizeTableName((string) ($config['table'] ?? ''));
+        if ($table === '') {
+            return response()->json(['error' => 'Invalid or missing table configuration.'], 500);
+        }
+
+        $query = DB::table($table)->select($columns);
+        $relations = $config['relations'] ?? [];
+
+        foreach ($relations as $rel) {
+            if (! is_array($rel)) {
+                continue;
+            }
+            $joinTable = $this->sanitizeTableName((string) ($rel['table'] ?? ''));
+            $foreignKey = $this->sanitizeIdentifier((string) ($rel['foreign_key'] ?? ''));
+            if ($joinTable === '' || $foreignKey === '') {
+                continue;
+            }
+            $type = ($rel['type'] ?? 'join') === 'left_join' ? 'left_join' : 'join';
+            $mainTable = $table;
+
+            if ($type === 'left_join') {
+                $query->leftJoin(
+                    $joinTable,
+                    "{$mainTable}.{$foreignKey}",
+                    '=',
+                    "{$joinTable}.id"
+                );
+            } else {
+                $query->join(
+                    $joinTable,
+                    "{$mainTable}.{$foreignKey}",
+                    '=',
+                    "{$joinTable}.id"
+                );
+            }
+
+            $relColumns = $rel['columns'] ?? [];
+            foreach ((array) $relColumns as $col) {
+                if (is_string($col) && $this->isSafeJoinColumnExpression($col)) {
+                    $query->addSelect(DB::raw($col));
+                }
+            }
+        }
+
+        $data = $query->get();
+        $data = $this->groupJoinAliases($data, $relations);
+
+        // Nur konfigurierte Spalten der Haupttabelle ausgeben (Join-Aliase bleiben erhalten)
+        if ($columns !== ['*']) {
+            $allowedMainKeys = array_flip($columns);
+            $aliasNames = $this->getJoinAliasNames($relations);
+            $data = $data->map(function ($row) use ($allowedMainKeys, $aliasNames) {
+                $arr = (array) $row;
+                $out = [];
+                foreach ($arr as $k => $v) {
+                    if (isset($allowedMainKeys[$k])) {
+                        $out[$k] = $v;
+                    } elseif (isset($aliasNames[$k])) {
+                        $out[$k] = $v;
+                    }
+                }
+                return is_object($row) ? (object) $out : $out;
+            });
+        }
+
+        return response()->json($data);
+    }
+
+    /**
+     * Tabellenname auf sichere Zeichen beschränken (SQL-Injection vermeiden).
+     */
+    protected function sanitizeTableName(string $table): string
+    {
+        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+
+        return $sanitized ?? '';
+    }
+
+    /**
+     * Einzelnen Identifier (z. B. foreign_key) bereinigen.
+     */
+    protected function sanitizeIdentifier(string $value): string
+    {
+        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', $value);
+
+        return $sanitized ?? '';
+    }
+
+    /**
+     * Join-Spaltenausdruck erlauben nur wenn er wie "col" oder "col as alias" aussieht (kein rohes SQL).
+     */
+    protected function isSafeJoinColumnExpression(string $col): bool
+    {
+        return (bool) preg_match(self::SAFE_IDENTIFIER_PATTERN, $col);
     }
 
     /**
@@ -97,6 +208,23 @@ class MiniApiController extends Controller
             }
         }
         return $normalized;
+    }
+
+    /**
+     * Liefert die Alias-Namen der Joins (für Filterung: diese Keys beibehalten).
+     *
+     * @param  array  $relations
+     * @return array<string, true>
+     */
+    protected function getJoinAliasNames(array $relations): array
+    {
+        $aliases = [];
+        foreach ($relations as $rel) {
+            if (is_array($rel) && ! empty($rel['alias'])) {
+                $aliases[$rel['alias']] = true;
+            }
+        }
+        return $aliases;
     }
 
     /**
