@@ -46,24 +46,24 @@ The **Mini API** is a lean Laravel package that provides JSON endpoints through 
 
 ## Features at a glance
 
-| Feature                           | Description                                                                                                             |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------ |
-| **GET only**                      | All endpoints are reachable only via GET; no write operations.                                                          |
-| **Config-driven**                 | No dedicated controller per endpoint—everything in `config/mini-api.php`.                                               |
-| **Table or model**                | Data source: **Query Builder** (table + columns) or **Eloquent model** (including relations).                           |
-| **Column selection**              | Per endpoint, define exactly which columns are returned (e.g. excluding `password`).                                    |
-| **Eloquent relations**            | With a model: eager loading via `relations` (e.g. `company`, `company.country`).                                        |
-| **Relations with columns**        | Relations can be limited to specific columns: `'applications' => ['id', 'status']`.                                     |
-| **Joins without model**           | Without Eloquent: joins (including left join) with `foreign_key`, `columns`, and optional **alias** for nested objects. |
-| **Alias for joins**               | Join columns can be grouped into a nested object (e.g. `company: { name, slug }`).                                      |
-| **API key auth**                  | Optional: access only with a valid key (header `X-Api-Key` or query `api_key`).                                         |
-| **Auth per endpoint**             | Global API key or per-endpoint key (endpoint config overrides global).                                                  |
-| **Artisan: generate key**         | `php artisan mini-api:generate-key`—generates a key and writes it to `.env` (options: `--show`, `--force`, `--length`). |
-| **Config from database**          | `php artisan mini-api:config-from-database`—generates endpoints from all tables (options: `--exclude`, `--columns=list  | all`). |
-| **Config Builder (web UI)**       | UI to build endpoint configs: pick tables/columns/models/relations, preview, copy, or write directly to config.         |
-| **Multiple endpoints in builder** | Collect endpoints and add them together to `config/mini-api.php`.                                                       |
-| **MySQL, SQLite, PostgreSQL**     | Support for common Laravel database drivers (including for builder and config-from-database).                           |
-| **JSON response**                 | Always `Content-Type: application/json`; 200 (data), 401 (invalid key), 404 (unknown endpoint).                         |
+| Feature | Description |
+|---------|-------------|
+| **GET only** | All endpoints are reachable only via GET; no write operations. |
+| **Config-driven** | No dedicated controller per endpoint—everything in `config/mini-api.php`. |
+| **Table or model** | Data source: **Query Builder** (table + columns) or **Eloquent model** (including relations). |
+| **Column selection** | Per endpoint, define exactly which columns are returned (e.g. excluding `password`). |
+| **Eloquent relations** | With a model: eager loading via `relations` (e.g. `user`, `user.role`). |
+| **Relations with columns** | Relations can be limited to specific columns: `'comments' => ['id', 'body']`. |
+| **Joins without model** | Without Eloquent: joins (including left join) with `foreign_key`, `columns`, and optional **alias** for nested objects. |
+| **Alias for joins** | Join columns can be grouped into a nested object (e.g. `author: { name, email }`). |
+| **API key auth** | Optional: access only with a valid key (header `X-Api-Key` or query `api_key`). |
+| **Auth per endpoint** | Global API key or per-endpoint key (endpoint config overrides global). |
+| **Artisan: generate key** | `php artisan mini-api:generate-key`—generates a key and writes it to `.env` (options: `--show`, `--force`, `--length`). |
+| **Config from database** | `php artisan mini-api:config-from-database`—generates endpoints from all tables (options: `--exclude`, `--columns=list\|all`). |
+| **Config Builder (web UI)** | UI to build endpoint configs: pick tables/columns/models/relations, preview, copy, or write directly to config. |
+| **Multiple endpoints in builder** | Collect endpoints and add them together to `config/mini-api.php`. |
+| **MySQL, SQLite, PostgreSQL** | Support for common Laravel database drivers (including for builder and config-from-database). |
+| **JSON response** | Always `Content-Type: application/json`; 200 (data), 401 (invalid key), 404 (unknown endpoint). |
 
 ---
 
@@ -179,7 +179,7 @@ Each entry under `endpoints` becomes **one GET route**:
 
 **Options:**
 
-- **`relations`** – With **model**: Eloquent relation names (e.g. `['company', 'company.country']`); with **table**: joins (array with `type`, `table`, `foreign_key`, `columns`, optional `alias`).
+- **`relations`** – With **model**: Eloquent relation names (e.g. `['user', 'user.role']`); with **table**: joins (array with `type`, `table`, `foreign_key`, `columns`, optional `alias`).
 - **`auth`** – Optional: per-endpoint API key (overrides global `auth`).
 
 ---
@@ -205,24 +205,24 @@ Each entry under `endpoints` becomes **one GET route**:
 
 ```php
 'endpoints' => [
-    'job_offers' => [
-        'route'     => 'job-offers',
-        'model'     => \App\Models\JobOffer::class,
-        'columns'   => ['id', 'title', 'slug', 'company_id', 'created_at'],
-        'relations' => ['company', 'company.country'],
+    'posts' => [
+        'route'     => 'posts',
+        'model'     => \App\Models\Post::class,
+        'columns'   => ['id', 'title', 'slug', 'user_id', 'created_at'],
+        'relations' => ['user', 'user.role'],
     ],
 ],
 ```
 
-- **Request:** `GET /api/job-offers`
-- **Response:** JSON with nested objects `company` and `company.country` (eager loaded).
+- **Request:** `GET /api/posts`
+- **Response:** JSON with nested objects `user` and `user.role` (eager loaded).
 
 Relations can also be limited to specific columns:
 
 ```php
 'relations' => [
-    'company',
-    'applications' => ['id', 'status'],  // only these columns for the relation
+    'user',
+    'comments' => ['id', 'body'],  // only these columns for the relation
 ],
 ```
 
@@ -233,17 +233,17 @@ Relations can also be limited to specific columns:
 If you don't use Eloquent models, you can use **joins** to include related tables:
 
 ```php
-'job_offers' => [
-    'route'   => 'job-offers',
-    'table'   => 'job_offers',
-    'columns' => ['id', 'title', 'slug', 'company_id', 'created_at'],
+'posts' => [
+    'route'   => 'posts',
+    'table'   => 'posts',
+    'columns' => ['id', 'title', 'slug', 'user_id', 'category_id', 'created_at'],
     'relations' => [
         [
             'type'         => 'join',
-            'table'        => 'companies',
-            'foreign_key'  => 'company_id',
-            'columns'      => ['name as company_name', 'slug as company_slug'],
-            'alias'        => 'company',   // optional: nested object in JSON
+            'table'        => 'users',
+            'foreign_key'  => 'user_id',
+            'columns'      => ['name as author_name', 'email as author_email'],
+            'alias'        => 'author',   // optional: nested object in JSON
         ],
         [
             'type'         => 'left_join',
@@ -255,8 +255,8 @@ If you don't use Eloquent models, you can use **joins** to include related table
 ],
 ```
 
-- **Without `alias`:** Columns appear at the top level (e.g. `company_name`, `company_slug`).
-- **With `alias`:** Columns are grouped into a nested object (e.g. `company: { company_name, company_slug }`).
+- **Without `alias`:** Columns appear at the top level (e.g. `author_name`, `author_email`).
+- **With `alias`:** Columns are grouped into a nested object (e.g. `author: { author_name, author_email }`).
 
 ---
 
@@ -301,10 +301,10 @@ The command writes `MINI_API_KEY=<generated-key>` to `.env`. On first run it als
 - Base: **`/api/`** + the **`route`** value from the config.
 - **Only GET** is supported—reading the configured data. POST, PUT, PATCH, DELETE are not supported and result in 405 or are handled differently by Laravel.
 
-Examples (when `route` is `users` or `job-offers`):
+Examples (when `route` is `users` or `posts`):
 
 - `GET https://your-domain.com/api/users`
-- `GET https://your-domain.com/api/job-offers`
+- `GET https://your-domain.com/api/posts`
 
 ### Without API key
 
@@ -421,7 +421,7 @@ The route can be changed in `config/mini-api.php` under `builder.route`.
 1. **Select table** – List of all database tables (real tables only, no views).
 2. **Columns** – Checkboxes for columns; “Select all” / “Deselect all”.
 3. **Optional: Model** – If an Eloquent model exists for the table, you can select it (then relations are available).
-4. **Optional: Relations** – With a model selected: relations as checkboxes (including nested, e.g. `company.country`).
+4. **Optional: Relations** – With a model selected: relations as checkboxes (including nested, e.g. `user.role`).
 5. **Endpoint key & route** – Config key (e.g. `users`) and API path (e.g. `users` → `/api/users`).
 6. **Actions:**
    - **Add endpoint to list** – Add current endpoint to a list (for multiple endpoints).
