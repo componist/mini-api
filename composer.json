@@ -1,8 +1,32 @@
 {
+    "$schema": "https://getcomposer.org/schema.json",
     "name": "componist/mini-api",
-    "description": "Config-driven Mini API for Laravel – routes, table/model, columns, relations, optional API-Key auth",
+    "description": "Config-driven read-only API for Laravel. Expose your data via simple GET requests—define routes, tables or Eloquent models, columns, and relations in one config file. Optional API key auth.",
     "type": "library",
     "license": "MIT",
+    "keywords": [
+        "laravel",
+        "api",
+        "rest",
+        "get",
+        "read-only",
+        "json",
+        "config",
+        "eloquent",
+        "api-key",
+        "auth"
+    ],
+    "homepage": "https://github.com/componist/mini-api",
+    "support": {
+        "issues": "https://github.com/componist/mini-api/issues",
+        "source": "https://github.com/componist/mini-api"
+    },
+    "authors": [
+        {
+            "name": "Componist",
+            "homepage": "https://github.com/componist"
+        }
+    ],
     "require": {
         "php": "^8.2"
     },
