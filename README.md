@@ -46,24 +46,24 @@ The **Mini API** is a lean Laravel package that provides JSON endpoints through 
 
 ## Features at a glance
 
-| Feature | Description |
-|---------|-------------|
-| **GET only** | All endpoints are reachable only via GET; no write operations. |
-| **Config-driven** | No dedicated controller per endpoint—everything in `config/mini-api.php`. |
-| **Table or model** | Data source: **Query Builder** (table + columns) or **Eloquent model** (including relations). |
-| **Column selection** | Per endpoint, define exactly which columns are returned (e.g. excluding `password`). |
-| **Eloquent relations** | With a model: eager loading via `relations` (e.g. `user`, `user.role`). |
-| **Relations with columns** | Relations can be limited to specific columns: `'comments' => ['id', 'body']`. |
-| **Joins without model** | Without Eloquent: joins (including left join) with `foreign_key`, `columns`, and optional **alias** for nested objects. |
-| **Alias for joins** | Join columns can be grouped into a nested object (e.g. `author: { name, email }`). |
-| **API key auth** | Optional: access only with a valid key (header `X-Api-Key` or query `api_key`). |
-| **Auth per endpoint** | Global API key or per-endpoint key (endpoint config overrides global). |
-| **Artisan: generate key** | `php artisan mini-api:generate-key`—generates a key and writes it to `.env` (options: `--show`, `--force`, `--length`). |
-| **Config from database** | `php artisan mini-api:config-from-database`—generates endpoints from all tables (options: `--exclude`, `--columns=list\|all`). |
-| **Config Builder (web UI)** | UI to build endpoint configs: pick tables/columns/models/relations, preview, copy, or write directly to config. |
-| **Multiple endpoints in builder** | Collect endpoints and add them together to `config/mini-api.php`. |
-| **MySQL, SQLite, PostgreSQL** | Support for common Laravel database drivers (including for builder and config-from-database). |
-| **JSON response** | Always `Content-Type: application/json`; 200 (data), 401 (invalid key), 404 (unknown endpoint). |
+| Feature                           | Description                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **GET only**                      | All endpoints are reachable only via GET; no write operations.                                                                 |
+| **Config-driven**                 | No dedicated controller per endpoint—everything in `config/mini-api.php`.                                                      |
+| **Table or model**                | Data source: **Query Builder** (table + columns) or **Eloquent model** (including relations).                                  |
+| **Column selection**              | Per endpoint, define exactly which columns are returned (e.g. excluding `password`).                                           |
+| **Eloquent relations**            | With a model: eager loading via `relations` (e.g. `user`, `user.role`).                                                        |
+| **Relations with columns**        | Relations can be limited to specific columns: `'comments' => ['id', 'body']`.                                                  |
+| **Joins without model**           | Without Eloquent: joins (including left join) with `foreign_key`, `columns`, and optional **alias** for nested objects.        |
+| **Alias for joins**               | Join columns can be grouped into a nested object (e.g. `author: { name, email }`).                                             |
+| **API key auth**                  | Optional: access only with a valid key (header `X-Api-Key` or query `api_key`).                                                |
+| **Auth per endpoint**             | Global API key or per-endpoint key (endpoint config overrides global).                                                         |
+| **Artisan: generate key**         | `php artisan mini-api:generate-key`—generates a key and writes it to `.env` (options: `--show`, `--force`, `--length`).        |
+| **Config from database**          | `php artisan mini-api:config-from-database`—generates endpoints from all tables (options: `--exclude`, `--columns=list\|all`). |
+| **Config Builder (web UI)**       | UI to build endpoint configs: pick tables/columns/models/relations, preview, copy, or write directly to config.                |
+| **Multiple endpoints in builder** | Collect endpoints and add them together to `config/mini-api.php`.                                                              |
+| **MySQL, SQLite, PostgreSQL**     | Support for common Laravel database drivers (including for builder and config-from-database).                                  |
+| **JSON response**                 | Always `Content-Type: application/json`; 200 (data), 401 (invalid key), 404 (unknown endpoint).                                |
 
 ---
 
