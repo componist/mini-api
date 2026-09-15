@@ -1,7 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Componist\MiniApi\Http\Controllers;
 
+use Componist\MiniApi\Application\MiniApiAuthService;
+use Componist\MiniApi\Domain\MiniApiIdentifierRules;
+use Componist\MiniApi\Infrastructure\MiniApiSchemaGuard;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -10,9 +15,6 @@ use Illuminate\Support\Facades\DB;
 
 class MiniApiController extends Controller
 {
-    /** Erlaubte Zeichen für Tabellen-/Spaltennamen (Identifier). */
-    private const SAFE_IDENTIFIER_PATTERN = '/^[a-zA-Z0-9_.\s]+$/';
-
     public function show(Request $request, string $endpoint): JsonResponse
     {
         $config = config("mini-api.endpoints.{$endpoint}");
@@ -20,20 +22,17 @@ class MiniApiController extends Controller
             abort(404);
         }
 
-        // Auth: API-Key prüfen (global oder pro Endpoint)
-        $auth = array_merge(config('mini-api.auth', []), $config['auth'] ?? []);
-        if (! empty($auth['enabled']) && ! empty($auth['key'])) {
-            $provided = $request->header($auth['header'] ?? 'X-Api-Key')
-                ?? $request->query($auth['query'] ?? 'api_key');
-            if ($provided !== $auth['key']) {
-                return response()->json(['error' => 'Invalid or missing API key'], 401);
-            }
+        $authResponse = MiniApiAuthService::authorizeRequest($request, $config);
+        if ($authResponse !== null) {
+            return $authResponse;
         }
 
         try {
-            $columns = $config['columns'] ?? ['*'];
-            if (! is_array($columns) || $columns === []) {
-                $columns = ['*'];
+            $columns = $config['columns'] ?? null;
+            if (! is_array($columns) || $columns === [] || in_array('*', $columns, true)) {
+                return response()->json([
+                    'error' => 'Endpoint muss explizite Spalten definieren (kein *).',
+                ], 500);
             }
 
             if (isset($config['model'])) {
@@ -45,59 +44,65 @@ class MiniApiController extends Controller
             report($e);
 
             return response()->json(
-                ['error' => 'An error occurred while fetching data.'],
+                ['error' => 'Beim Abrufen der Daten ist ein Fehler aufgetreten.'],
                 500
             );
         }
     }
 
     /**
-     * Daten über Eloquent-Model auslesen und als JSON liefern.
-     *
      * @param  array<string, mixed>  $config
-     * @param  array<int, string>  $columns
+     * @param  list<string>  $columns
      */
     protected function respondWithModel(array $config, array $columns): JsonResponse
     {
         $modelClass = $config['model'];
         if (! is_string($modelClass) || ! class_exists($modelClass) || ! is_subclass_of($modelClass, Model::class)) {
-            return response()->json(['error' => 'Invalid or missing model configuration.'], 500);
+            return response()->json(['error' => 'Ungültige Model-Konfiguration.'], 500);
         }
 
+        $columns = MiniApiSchemaGuard::filterModelColumns($columns);
+        if ($columns === []) {
+            return response()->json(['error' => 'Keine erlaubten Spalten konfiguriert.'], 500);
+        }
+
+        $limit = $this->resolveLimit($config);
         $query = $modelClass::query()->select($columns);
         $relations = $this->normalizeRelations($config['relations'] ?? []);
-        if (! empty($relations)) {
+        if ($relations !== []) {
             $query->with($relations);
         }
-        $data = $query->get();
+        $data = $query->limit($limit)->get();
 
-        // Nur konfigurierte Spalten ausgeben (Relationen bleiben erhalten)
-        if ($columns !== ['*']) {
-            $allowedKeys = array_flip($columns);
-            $data = $data->map(function (Model $model) use ($allowedKeys) {
-                $arr = $model->toArray();
-                $main = array_intersect_key($arr, $allowedKeys);
-                $relations = array_diff_key($arr, $allowedKeys);
-                return array_merge($main, $relations);
-            });
-        }
+        $allowedKeys = array_flip($columns);
+        $data = $data->map(function (Model $model) use ($allowedKeys) {
+            $arr = $model->toArray();
+            $main = array_intersect_key($arr, $allowedKeys);
+            $relations = array_diff_key($arr, $allowedKeys);
+
+            return array_merge($main, $relations);
+        });
 
         return response()->json($data);
     }
 
     /**
-     * Daten über Query Builder (Tabelle + optionale Joins) auslesen und als JSON liefern.
-     *
      * @param  array<string, mixed>  $config
-     * @param  array<int, string>  $columns
+     * @param  list<string>  $columns
      */
     protected function respondWithTable(array $config, array $columns): JsonResponse
     {
         $table = $this->sanitizeTableName((string) ($config['table'] ?? ''));
-        if ($table === '') {
-            return response()->json(['error' => 'Invalid or missing table configuration.'], 500);
+        if ($table === '' || ! MiniApiSchemaGuard::isAllowedTable($table)) {
+            return response()->json(['error' => 'Tabelle ist nicht erlaubt.'], 403);
         }
 
+        $columns = MiniApiSchemaGuard::filterColumns($table, $columns);
+        if ($columns === []) {
+            return response()->json(['error' => 'Keine erlaubten Spalten konfiguriert.'], 500);
+        }
+
+        $limit = $this->resolveLimit($config);
         $query = DB::table($table)->select($columns);
         $relations = $config['relations'] ?? [];
 
@@ -107,7 +112,7 @@ class MiniApiController extends Controller
             }
             $joinTable = $this->sanitizeTableName((string) ($rel['table'] ?? ''));
             $foreignKey = $this->sanitizeIdentifier((string) ($rel['foreign_key'] ?? ''));
-            if ($joinTable === '' || $foreignKey === '') {
+            if ($joinTable === '' || $foreignKey === '' || ! MiniApiSchemaGuard::isAllowedTable($joinTable)) {
                 continue;
             }
             $type = ($rel['type'] ?? 'join') === 'left_join' ? 'left_join' : 'join';
@@ -137,61 +142,52 @@ class MiniApiController extends Controller
             }
         }
 
-        $data = $query->get();
+        $data = $query->limit($limit)->get();
         $data = $this->groupJoinAliases($data, $relations);
 
-        // Nur konfigurierte Spalten der Haupttabelle ausgeben (Join-Aliase bleiben erhalten)
-        if ($columns !== ['*']) {
-            $allowedMainKeys = array_flip($columns);
-            $aliasNames = $this->getJoinAliasNames($relations);
-            $data = $data->map(function ($row) use ($allowedMainKeys, $aliasNames) {
-                $arr = (array) $row;
-                $out = [];
-                foreach ($arr as $k => $v) {
-                    if (isset($allowedMainKeys[$k])) {
-                        $out[$k] = $v;
-                    } elseif (isset($aliasNames[$k])) {
-                        $out[$k] = $v;
-                    }
+        $allowedMainKeys = array_flip($columns);
+        $aliasNames = $this->getJoinAliasNames($relations);
+        $data = $data->map(function ($row) use ($allowedMainKeys, $aliasNames) {
+            $arr = (array) $row;
+            $out = [];
+            foreach ($arr as $k => $v) {
+                if (isset($allowedMainKeys[$k]) || isset($aliasNames[$k])) {
+                    $out[$k] = $v;
                 }
-                return is_object($row) ? (object) $out : $out;
-            });
-        }
+            }
+
+            return is_object($row) ? (object) $out : $out;
+        });
 
         return response()->json($data);
     }
 
     /**
-     * Tabellenname auf sichere Zeichen beschränken (SQL-Injection vermeiden).
+     * @param  array<string, mixed>  $config
      */
+    protected function resolveLimit(array $config): int
+    {
+        $configured = (int) ($config['limit'] ?? config('mini-api.max_rows', 500));
+
+        return max(1, min($configured, (int) config('mini-api.max_rows', 500)));
+    }
+
     protected function sanitizeTableName(string $table): string
     {
-        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
-
-        return $sanitized ?? '';
+        return MiniApiIdentifierRules::sanitizeIdentifier($table);
     }
 
-    /**
-     * Einzelnen Identifier (z. B. foreign_key) bereinigen.
-     */
     protected function sanitizeIdentifier(string $value): string
     {
-        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', $value);
-
-        return $sanitized ?? '';
+        return MiniApiIdentifierRules::sanitizeIdentifier($value);
     }
 
-    /**
-     * Join-Spaltenausdruck erlauben nur wenn er wie "col" oder "col as alias" aussieht (kein rohes SQL).
-     */
     protected function isSafeJoinColumnExpression(string $col): bool
     {
-        return (bool) preg_match(self::SAFE_IDENTIFIER_PATTERN, $col);
+        return MiniApiIdentifierRules::isSafeJoinColumnExpression($col);
     }
 
     /**
-     * Normalisiert relations für Eloquent with(): Strings und 'relation' => ['col1','col2'].
-     *
      * @param  array<int|string, mixed>  $relations
      * @return array<int|string, mixed>
      */
@@ -202,18 +198,17 @@ class MiniApiController extends Controller
             if (is_int($key) && is_string($value)) {
                 $normalized[] = $value;
             } elseif (is_string($key) && is_array($value)) {
-                $normalized[$key] = fn ($q) => $q->select($value);
+                $normalized[$key] = fn ($q) => $q->select(MiniApiSchemaGuard::filterModelColumns($value));
             } else {
                 $normalized[] = $value;
             }
         }
+
         return $normalized;
     }
 
     /**
-     * Liefert die Alias-Namen der Joins (für Filterung: diese Keys beibehalten).
-     *
-     * @param  array  $relations
+     * @param  array<int|string, mixed>  $relations
      * @return array<string, true>
      */
     protected function getJoinAliasNames(array $relations): array
@@ -221,18 +216,17 @@ class MiniApiController extends Controller
         $aliases = [];
         foreach ($relations as $rel) {
             if (is_array($rel) && ! empty($rel['alias'])) {
-                $aliases[$rel['alias']] = true;
+                $aliases[(string) $rel['alias']] = true;
             }
         }
+
         return $aliases;
     }
 
     /**
-     * Gruppiert Join-Spalten in Unterobjekte wenn alias gesetzt.
-     *
-     * @param  \Illuminate\Support\Collection  $rows
-     * @param  array  $relations
-     * @return \Illuminate\Support\Collection
+     * @param  \Illuminate\Support\Collection<int, mixed>  $rows
+     * @param  array<int|string, mixed>  $relations
+     * @return \Illuminate\Support\Collection<int, mixed>
      */
     protected function groupJoinAliases($rows, array $relations)
     {
@@ -242,16 +236,17 @@ class MiniApiController extends Controller
                 $aliases[$rel['alias']] = $rel['columns'] ?? [];
             }
         }
-        if (empty($aliases)) {
+        if ($aliases === []) {
             return $rows;
         }
+
         return $rows->map(function ($row) use ($aliases) {
             $arr = (array) $row;
             $out = [];
             $used = [];
             foreach ($aliases as $alias => $cols) {
                 foreach ($cols as $col) {
-                    $parts = preg_split('/\s+as\s+/i', $col, 2);
+                    $parts = preg_split('/\s+as\s+/i', (string) $col, 2);
                     $key = isset($parts[1]) ? trim($parts[1]) : trim($parts[0]);
                     if (array_key_exists($key, $arr)) {
                         $used[$key] = true;
@@ -264,6 +259,7 @@ class MiniApiController extends Controller
                     $out[$k] = $v;
                 }
             }
+
             return $out;
         });
     }

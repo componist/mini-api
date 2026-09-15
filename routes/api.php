@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Componist\MiniApi\Http\Controllers\MiniApiController;
 
-Route::prefix('api')->group(function (): void {
+Route::prefix('api')->middleware('throttle:60,1')->group(function (): void {
     $endpoints = config('mini-api.endpoints');
     if (! is_array($endpoints)) {
         return;

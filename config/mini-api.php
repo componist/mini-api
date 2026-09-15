@@ -1,55 +1,58 @@
 <?php
 
+declare(strict_types=1);
+
 return [
     /*
     |--------------------------------------------------------------------------
-    | API-Key Auth (optional)
+    | API-Key Auth
     |--------------------------------------------------------------------------
-    | Wenn enabled und key gesetzt: nur bei korrektem Key werden Daten ausgegeben.
-    | Key per: php artisan mini-api:generate-key (schreibt in .env)
+    | Bei enabled=true muss MINI_API_KEY gesetzt sein – sonst 401.
     */
     'auth' => [
-        'enabled' => env('MINI_API_AUTH_ENABLED', false),
+        'enabled' => env('MINI_API_AUTH_ENABLED', true),
         'key' => env('MINI_API_KEY'),
         'header' => 'X-Api-Key',
         'query' => 'api_key',
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Endpoints
-    |--------------------------------------------------------------------------
-    | Jeder Eintrag = eine API-Route. route = URL-Pfad (ohne api/), table oder model,
-    | columns = Spalten, optional relations (Eloquent with oder Joins).
-    |
-    | Beispiel mit Tabelle (Query Builder):
-    |   'users' => [
-    |       'route'   => 'users',
-    |       'table'   => 'users',
-    |       'columns' => ['id', 'name', 'email'],
-    |   ],
-    |
-    | Beispiel mit Model (Eloquent + Relationen):
-    |   'job_offers' => [
-    |       'route'     => 'job-offers',
-    |       'model'     => \App\Models\JobOffer::class,
-    |       'columns'   => ['id', 'title', 'slug'],
-    |       'relations' => ['company', 'company.country'],
-    |   ],
-    */
-    'endpoints' => [
-        'users' => [
-            'route' => 'users',
-            'table' => 'users',
-            // 'columns' => ['id', 'name', 'email', 'created_at'],
-        ],
+    'max_rows' => (int) env('MINI_API_MAX_ROWS', 500),
+
+    'blocked_tables' => [
+        'password_reset_tokens',
+        'sessions',
+        'personal_access_tokens',
+        'migrations',
+        'failed_jobs',
+        'job_batches',
+        'jobs',
+        'cache',
+        'cache_locks',
+        'apps',
+        'users_apps',
+        'user_auth_tokens',
+        'database_connectings',
+    ],
+
+    'blocked_fields' => [
+        'password',
+        'remember_token',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'two_factor_code',
+        'two_factor_expires_at',
+        'token',
+        'auth_token',
+        'secret_token',
+        'database_password',
     ],
 
     /*
-    |--------------------------------------------------------------------------
-    | Config-Builder (optional, nur Dev)
-    |--------------------------------------------------------------------------
+    | Endpoints: immer explizite columns setzen (kein *).
+    | Demo-Endpoint absichtlich leer – in Root-Config pflegen.
     */
+    'endpoints' => [],
+
     'builder' => [
         'enabled' => env('MINI_API_BUILDER_ENABLED', false),
         'only_dev' => env('MINI_API_BUILDER_ONLY_DEV', true),

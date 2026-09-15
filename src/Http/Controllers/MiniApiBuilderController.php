@@ -2,6 +2,7 @@
 
 namespace Componist\MiniApi\Http\Controllers;
 
+use Componist\MiniApi\Infrastructure\MiniApiSchemaGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -26,19 +27,30 @@ class MiniApiBuilderController extends Controller
      */
     public function tables(): JsonResponse
     {
-        $tables = $this->getDatabaseTableNamesOnly();
+        $blocked = array_map('strtolower', config('mini-api.blocked_tables', []));
+        $tables = array_values(array_filter(
+            $this->getDatabaseTableNamesOnly(),
+            static fn (string $table): bool => MiniApiSchemaGuard::isValidIdentifier($table)
+                && ! in_array(strtolower($table), $blocked, true)
+        ));
+
         return response()->json(['tables' => $tables]);
     }
 
-    /**
-     * GET /mini-api-builder/api/tables/{table}/columns – Spalten einer Tabelle.
-     */
     public function columns(string $table): JsonResponse
     {
         $table = $this->sanitizeTableName($table);
-        $columns = Schema::getColumnListing($table);
+        if ($table === '' || ! MiniApiSchemaGuard::isValidIdentifier($table)) {
+            return response()->json(['columns' => []], 404);
+        }
 
-        return response()->json(['columns' => array_values(array_unique((array) $columns))]);
+        if (in_array(strtolower($table), array_map('strtolower', config('mini-api.blocked_tables', [])), true)) {
+            return response()->json(['error' => 'Tabelle ist nicht erlaubt.'], 403);
+        }
+
+        $columns = MiniApiSchemaGuard::filterColumns($table, Schema::getColumnListing($table));
+
+        return response()->json(['columns' => $columns]);
     }
 
     /**

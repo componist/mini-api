@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Componist\MiniApi;
 
 use Componist\MiniApi\Console\GenerateMiniApiConfigFromDatabaseCommand;
@@ -13,22 +15,22 @@ class MiniApiServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(
-            __DIR__ . '/../config/mini-api.php',
+            __DIR__.'/../config/mini-api.php',
             'mini-api'
         );
-        // API-Routen in register() laden, damit sie vor Catch-all-Routen (z. B. api-manager) registriert werden
-        $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
+
+        $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
     }
 
     public function boot(): void
     {
-        $this->loadViewsFrom(__DIR__ . '/../resources/views', 'mini-api');
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'mini-api');
         $this->registerCommands();
         $this->registerBuilderRoutes();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
-                __DIR__ . '/../config/mini-api.php' => config_path('mini-api.php'),
+                __DIR__.'/../config/mini-api.php' => config_path('mini-api.php'),
             ], 'mini-api-config');
         }
     }
@@ -42,14 +44,17 @@ class MiniApiServiceProvider extends ServiceProvider
         }
 
         $prefix = config('mini-api.builder.route', 'mini-api-builder');
-        Route::middleware('web')->prefix($prefix)->group(function () use ($prefix): void {
-            Route::get('/', [MiniApiBuilderController::class, 'index'])->name('mini-api.builder');
-            Route::get('/api/tables', [MiniApiBuilderController::class, 'tables']);
-            Route::get('/api/tables/{table}/columns', [MiniApiBuilderController::class, 'columns']);
-            Route::get('/api/models', [MiniApiBuilderController::class, 'models']);
-            Route::get('/api/models/{model}/relations', [MiniApiBuilderController::class, 'relations']);
-            Route::post('/api/config', [MiniApiBuilderController::class, 'storeConfig']);
-        });
+
+        Route::middleware(['web', 'auth'])
+            ->prefix($prefix)
+            ->group(function (): void {
+                Route::get('/', [MiniApiBuilderController::class, 'index'])->name('mini-api.builder');
+                Route::get('/api/tables', [MiniApiBuilderController::class, 'tables']);
+                Route::get('/api/tables/{table}/columns', [MiniApiBuilderController::class, 'columns']);
+                Route::get('/api/models', [MiniApiBuilderController::class, 'models']);
+                Route::get('/api/models/{model}/relations', [MiniApiBuilderController::class, 'relations']);
+                Route::post('/api/config', [MiniApiBuilderController::class, 'storeConfig']);
+            });
     }
 
     protected function registerCommands(): void

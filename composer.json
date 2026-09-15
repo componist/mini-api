@@ -35,6 +35,11 @@
             "Componist\\MiniApi\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Componist\\MiniApi\\Tests\\": "tests/"
+        }
+    },
     "extra": {
         "laravel": {
             "providers": [
