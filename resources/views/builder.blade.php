@@ -16,17 +16,17 @@
         .builder-flex { display: flex; flex-wrap: wrap; gap: 0.5rem; }
         .builder-label { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0.75rem; border-radius: 0.25rem; border: 1px solid #e2e8f0; cursor: pointer; }
         .builder-label:hover { background: #f8fafc; }
-        .builder-label.selected { border-color: #6366f1; background: #eef2ff; }
-        .builder-input { width: 100%; border-radius: 0.25rem; border: 1px solid #cbd5e1; padding: 0.5rem 0.75rem; }
-        .builder-btn { padding: 0.5rem 1rem; border-radius: 0.25rem; border: none; cursor: pointer; font-weight: 500; }
-        .builder-btn-indigo { background: #4f46e5; color: #fff; }
-        .builder-btn-indigo:hover { background: #4338ca; }
+        .builder-label.selected { border-color: #14b8a6; background: #f0fdfa; }
+        .builder-input { width: 100%; border-radius: 0.375rem; border: 1px solid #cbd5e1; padding: 0.625rem 0.875rem; font-size: 0.875rem; }
+        .builder-btn { padding: 0.5rem 1rem; border-radius: 0.375rem; border: none; cursor: pointer; font-weight: 500; }
+        .builder-btn-indigo { background: #14b8a6; color: #fff; }
+        .builder-btn-indigo:hover { background: #0d9488; }
         .builder-btn-slate { background: #475569; color: #fff; }
         .builder-btn-slate:hover { background: #334155; }
-        .builder-btn-emerald { background: #059669; color: #fff; }
-        .builder-btn-emerald:hover { background: #047857; }
-        .builder-link { font-size: 0.875rem; color: #4f46e5; cursor: pointer; background: none; border: none; text-decoration: underline; }
-        .builder-pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.25rem; font-size: 0.875rem; overflow-x: auto; white-space: pre-wrap; }
+        .builder-btn-emerald { background: #14b8a6; color: #fff; }
+        .builder-btn-emerald:hover { background: #0d9488; }
+        .builder-link { font-size: 0.875rem; color: #0d9488; cursor: pointer; background: none; border: none; text-decoration: underline; }
+        .builder-pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.375rem; font-size: 0.875rem; overflow-x: auto; white-space: pre-wrap; }
         .builder-space > * + * { margin-top: 1.5rem; }
         .builder-gap { gap: 0.75rem; }
         .builder-msg-ok { color: #059669; }
@@ -34,8 +34,8 @@
         .builder-hint { color: #64748b; font-size: 0.8125rem; margin-top: 0.25rem; line-height: 1.4; }
         .builder-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .builder-step { border-left: 3px solid #e2e8f0; padding-left: 1rem; }
-        .builder-step.active { border-left-color: #6366f1; }
-        .builder-badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 9999px; background: #eef2ff; color: #4338ca; font-size: 0.75rem; font-weight: 500; }
+        .builder-step.active { border-left-color: #14b8a6; }
+        .builder-badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 9999px; background: #f0fdfa; color: #0f766e; font-size: 0.75rem; font-weight: 500; }
         .builder-summary { background: #f8fafc; border-radius: 0.25rem; padding: 0.75rem 1rem; font-size: 0.875rem; color: #475569; }
     </style>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
