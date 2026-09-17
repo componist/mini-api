@@ -6,6 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" href="data:,">
     <title>Mini API – Config-Builder</title>
+    @include('component::components.layouts.partials.theme-boot')
     <style>
         .builder-body { background: #f1f5f9; min-height: 100vh; padding: 1.5rem; }
         .builder-container { max-width: 56rem; margin: 0 auto; }
