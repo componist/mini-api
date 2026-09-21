@@ -53,6 +53,16 @@ return [
     */
     'endpoints' => [],
 
+    /*
+    | Import (mini-api:import): zieht Daten per HTTP aus der Mini-API der Live-Anwendung.
+    | Nur außerhalb von production nutzbar. Key getrennt vom eigenen MINI_API_KEY halten.
+    */
+    'import' => [
+        'url' => env('MINI_API_IMPORT_URL'),
+        'key' => env('MINI_API_IMPORT_KEY'),
+        'per_page' => (int) env('MINI_API_IMPORT_PER_PAGE', 500),
+    ],
+
     'builder' => [
         'enabled' => env('MINI_API_BUILDER_ENABLED', false),
         'only_dev' => env('MINI_API_BUILDER_ONLY_DEV', true),
