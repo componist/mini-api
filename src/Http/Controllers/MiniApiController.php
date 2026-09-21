@@ -6,12 +6,14 @@ namespace Componist\MiniApi\Http\Controllers;
 
 use Componist\MiniApi\Application\MiniApiAuthService;
 use Componist\MiniApi\Domain\MiniApiIdentifierRules;
+use Componist\MiniApi\Domain\MiniApiPageRequest;
+use Componist\MiniApi\Infrastructure\MiniApiJoinQueryBuilder;
+use Componist\MiniApi\Infrastructure\MiniApiQueryPager;
 use Componist\MiniApi\Infrastructure\MiniApiSchemaGuard;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\DB;
 
 class MiniApiController extends Controller
 {
@@ -35,11 +37,17 @@ class MiniApiController extends Controller
                 ], 500);
             }
 
+            $page = MiniApiPageRequest::fromQuery(
+                $request->query('page'),
+                $request->query('per_page'),
+                $this->resolveLimit($config),
+            );
+
             if (isset($config['model'])) {
-                return $this->respondWithModel($config, $columns);
+                return $this->respondWithModel($config, $columns, $page);
             }
 
-            return $this->respondWithTable($config, $columns);
+            return $this->respondWithTable($config, $columns, $page);
         } catch (\Throwable $e) {
             report($e);
 
@@ -54,7 +62,7 @@ class MiniApiController extends Controller
      * @param  array<string, mixed>  $config
      * @param  list<string>  $columns
      */
-    protected function respondWithModel(array $config, array $columns): JsonResponse
+    protected function respondWithModel(array $config, array $columns, ?MiniApiPageRequest $page): JsonResponse
     {
         $modelClass = $config['model'];
         if (! is_string($modelClass) || ! class_exists($modelClass) || ! is_subclass_of($modelClass, Model::class)) {
@@ -66,33 +74,38 @@ class MiniApiController extends Controller
             return response()->json(['error' => 'Keine erlaubten Spalten konfiguriert.'], 500);
         }
 
-        $limit = $this->resolveLimit($config);
         $query = $modelClass::query()->select($columns);
-        $relations = $this->normalizeRelations($config['relations'] ?? []);
+        if (MiniApiSchemaGuard::isBlockedTable($query->getModel()->getTable())) {
+            return response()->json(['error' => 'Tabelle ist nicht erlaubt.'], 403);
+        }
+
+        $limit = $this->resolveLimit($config);
+        $relations = $this->normalizeRelations($query->getModel(), $config['relations'] ?? []);
         if ($relations !== []) {
             $query->with($relations);
         }
-        $data = $query->limit($limit)->get();
+        $orderColumn = MiniApiSchemaGuard::resolveModelOrderColumn($query->getModel(), $config['order_by'] ?? null);
+        [$data, $headers] = MiniApiQueryPager::fetch($query, $limit, $page, $orderColumn);
 
         $allowedKeys = array_flip($columns);
         $data = $data->map(function (Model $model) use ($allowedKeys) {
             $arr = $model->toArray();
             $main = array_intersect_key($arr, $allowedKeys);
-            $relations = array_diff_key($arr, $allowedKeys);
+            $relations = MiniApiSchemaGuard::stripBlockedFields(array_diff_key($arr, $allowedKeys));
 
             return array_merge($main, $relations);
         });
 
-        return response()->json($data);
+        return response()->json($data, 200, $headers);
     }
 
     /**
      * @param  array<string, mixed>  $config
      * @param  list<string>  $columns
      */
-    protected function respondWithTable(array $config, array $columns): JsonResponse
+    protected function respondWithTable(array $config, array $columns, ?MiniApiPageRequest $page): JsonResponse
     {
-        $table = $this->sanitizeTableName((string) ($config['table'] ?? ''));
+        $table = MiniApiIdentifierRules::sanitizeIdentifier((string) ($config['table'] ?? ''));
         if ($table === '' || ! MiniApiSchemaGuard::isAllowedTable($table)) {
             return response()->json(['error' => 'Tabelle ist nicht erlaubt.'], 403);
         }
@@ -102,64 +115,16 @@ class MiniApiController extends Controller
             return response()->json(['error' => 'Keine erlaubten Spalten konfiguriert.'], 500);
         }
 
-        $limit = $this->resolveLimit($config);
-        $query = DB::table($table)->select($columns);
-        $relations = $config['relations'] ?? [];
-
-        foreach ($relations as $rel) {
-            if (! is_array($rel)) {
-                continue;
-            }
-            $joinTable = $this->sanitizeTableName((string) ($rel['table'] ?? ''));
-            $foreignKey = $this->sanitizeIdentifier((string) ($rel['foreign_key'] ?? ''));
-            if ($joinTable === '' || $foreignKey === '' || ! MiniApiSchemaGuard::isAllowedTable($joinTable)) {
-                continue;
-            }
-            $type = ($rel['type'] ?? 'join') === 'left_join' ? 'left_join' : 'join';
-            $mainTable = $table;
-
-            if ($type === 'left_join') {
-                $query->leftJoin(
-                    $joinTable,
-                    "{$mainTable}.{$foreignKey}",
-                    '=',
-                    "{$joinTable}.id"
-                );
-            } else {
-                $query->join(
-                    $joinTable,
-                    "{$mainTable}.{$foreignKey}",
-                    '=',
-                    "{$joinTable}.id"
-                );
-            }
-
-            $relColumns = $rel['columns'] ?? [];
-            foreach ((array) $relColumns as $col) {
-                if (is_string($col) && $this->isSafeJoinColumnExpression($col)) {
-                    $query->addSelect(DB::raw($col));
-                }
-            }
+        $orderColumn = MiniApiSchemaGuard::resolveOrderColumn($table, $config['order_by'] ?? null);
+        if ($page !== null && $orderColumn === null) {
+            return response()->json(['error' => 'Pagination benötigt einen Primärschlüssel oder `order_by`.'], 500);
         }
 
-        $data = $query->limit($limit)->get();
-        $data = $this->groupJoinAliases($data, $relations);
+        $relations = (array) ($config['relations'] ?? []);
+        $query = MiniApiJoinQueryBuilder::build($table, $columns, $relations);
+        [$data, $headers] = MiniApiQueryPager::fetch($query, $this->resolveLimit($config), $page, $orderColumn);
 
-        $allowedMainKeys = array_flip($columns);
-        $aliasNames = $this->getJoinAliasNames($relations);
-        $data = $data->map(function ($row) use ($allowedMainKeys, $aliasNames) {
-            $arr = (array) $row;
-            $out = [];
-            foreach ($arr as $k => $v) {
-                if (isset($allowedMainKeys[$k]) || isset($aliasNames[$k])) {
-                    $out[$k] = $v;
-                }
-            }
-
-            return is_object($row) ? (object) $out : $out;
-        });
-
-        return response()->json($data);
+        return response()->json(MiniApiJoinQueryBuilder::reshape($data, $columns, $relations), 200, $headers);
     }
 
     /**
@@ -172,95 +137,27 @@ class MiniApiController extends Controller
         return max(1, min($configured, (int) config('mini-api.max_rows', 500)));
     }
 
-    protected function sanitizeTableName(string $table): string
-    {
-        return MiniApiIdentifierRules::sanitizeIdentifier($table);
-    }
-
-    protected function sanitizeIdentifier(string $value): string
-    {
-        return MiniApiIdentifierRules::sanitizeIdentifier($value);
-    }
-
-    protected function isSafeJoinColumnExpression(string $col): bool
-    {
-        return MiniApiIdentifierRules::isSafeJoinColumnExpression($col);
-    }
-
     /**
      * @param  array<int|string, mixed>  $relations
      * @return array<int|string, mixed>
      */
-    protected function normalizeRelations(array $relations): array
+    protected function normalizeRelations(Model $model, array $relations): array
     {
         $normalized = [];
         foreach ($relations as $key => $value) {
-            if (is_int($key) && is_string($value)) {
-                $normalized[] = $value;
-            } elseif (is_string($key) && is_array($value)) {
+            $name = is_int($key) ? $value : $key;
+            // `relation:col1,col2` ist Eloquent-Syntax für eine Spaltenauswahl; geprüft wird nur der Relationsname.
+            if (! is_string($name) || ! MiniApiSchemaGuard::isAllowedRelationPath($model, explode(':', $name)[0])) {
+                continue;
+            }
+
+            if (is_string($key) && is_array($value)) {
                 $normalized[$key] = fn ($q) => $q->select(MiniApiSchemaGuard::filterModelColumns($value));
             } else {
-                $normalized[] = $value;
+                $normalized[] = $name;
             }
         }
 
         return $normalized;
-    }
-
-    /**
-     * @param  array<int|string, mixed>  $relations
-     * @return array<string, true>
-     */
-    protected function getJoinAliasNames(array $relations): array
-    {
-        $aliases = [];
-        foreach ($relations as $rel) {
-            if (is_array($rel) && ! empty($rel['alias'])) {
-                $aliases[(string) $rel['alias']] = true;
-            }
-        }
-
-        return $aliases;
-    }
-
-    /**
-     * @param  \Illuminate\Support\Collection<int, mixed>  $rows
-     * @param  array<int|string, mixed>  $relations
-     * @return \Illuminate\Support\Collection<int, mixed>
-     */
-    protected function groupJoinAliases($rows, array $relations)
-    {
-        $aliases = [];
-        foreach ($relations as $rel) {
-            if (is_array($rel) && ! empty($rel['alias'])) {
-                $aliases[$rel['alias']] = $rel['columns'] ?? [];
-            }
-        }
-        if ($aliases === []) {
-            return $rows;
-        }
-
-        return $rows->map(function ($row) use ($aliases) {
-            $arr = (array) $row;
-            $out = [];
-            $used = [];
-            foreach ($aliases as $alias => $cols) {
-                foreach ($cols as $col) {
-                    $parts = preg_split('/\s+as\s+/i', (string) $col, 2);
-                    $key = isset($parts[1]) ? trim($parts[1]) : trim($parts[0]);
-                    if (array_key_exists($key, $arr)) {
-                        $used[$key] = true;
-                        $out[$alias][$key] = $arr[$key];
-                    }
-                }
-            }
-            foreach ($arr as $k => $v) {
-                if (! isset($used[$k])) {
-                    $out[$k] = $v;
-                }
-            }
-
-            return $out;
-        });
     }
 }

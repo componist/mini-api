@@ -19,6 +19,21 @@ final class MiniApiIdentifierRules
         return (bool) preg_match(self::SAFE_JOIN_COLUMN_PATTERN, $column);
     }
 
+    /**
+     * @return array{table: ?string, column: string, alias: ?string}|null
+     */
+    public static function parseJoinColumn(string $expression): ?array
+    {
+        if (! self::isSafeJoinColumnExpression($expression)) {
+            return null;
+        }
+
+        [$reference, $alias] = array_pad(preg_split('/\s+as\s+/i', trim($expression), 2), 2, null);
+        [$table, $column] = str_contains($reference, '.') ? explode('.', $reference, 2) : [null, $reference];
+
+        return ['table' => $table, 'column' => $column, 'alias' => $alias];
+    }
+
     public static function sanitizeIdentifier(string $value): string
     {
         $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', $value);
