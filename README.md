@@ -20,7 +20,7 @@ Config-Key: `mini-api`.
 | `MINI_API_KEY` | API-Key (Header `X-Api-Key` oder Query `api_key`) |
 | `MINI_API_MAX_ROWS` | Row-Limit (Standard: 500) |
 | `endpoints` | Endpoint-Definitionen (explizite `columns`, kein `*`) |
-| `blocked_tables` / `blocked_fields` | Blocklisten |
+| `blocked_tables` / `blocked_fields` | Blocklisten (keine generische `token`-Sperre; Secrets pro Endpoint oder echte Secret-Feldnamen) |
 | `MINI_API_IMPORT_URL` / `MINI_API_IMPORT_KEY` | Live-URL und API-Key für `mini-api:import` |
 | `MINI_API_IMPORT_PER_PAGE` | Zeilen pro Import-Request (Standard: 500) |
 | `MINI_API_BUILDER_ENABLED` | Builder-UI (Standard: `false`) |
@@ -50,16 +50,17 @@ Ohne Parameter liefert ein Endpoint wie bisher bis zu `limit` Zeilen. Passt die 
 
 ```bash
 # .env (lokal): MINI_API_IMPORT_URL=https://live.example.com, MINI_API_IMPORT_KEY=<MINI_API_KEY der Live-App>
+php artisan componist:import-from-live            # alle Tabellen von Live (universal)
+php artisan componist:import-from-live --mode=update
 php artisan mini-api:import                       # interaktiv: Endpoints + Modus wählen
-php artisan mini-api:import posts --mode=update   # nicht interaktiv
+php artisan mini-api:import posts --mode=update   # einzelner Endpoint
 php artisan mini-api:import posts --mode=fresh --force
-php artisan mini-api:import --mode=fresh --force  # alle (interaktiv ausgewählt)
 ```
 
 Terminal-Ausgabe (Beispiel):
 
 ```text
-Starte Mini-API-Import (3 Endpoints, Modus: update)...
+Starte Import von Live (3 Endpoints, Modus: fresh)...
 Basis: https://live.example.com
 
 ▶ posts → posts...
@@ -88,7 +89,8 @@ Import mit Fehlern: 2/3 ok, 1 fehlgeschlagen, 49 Datensätze übernommen.
 | Command | Beschreibung |
 |---------|--------------|
 | `php artisan mini-api:generate-key` | Erzeugt einen API-Key |
-| `php artisan mini-api:import` | Importiert Live-Daten über die Mini-API (fresh/update). Optionen: `--fail-fast`, `--force`, `--mode`, `--url`, `--key`, `--per-page` |
+| `php artisan mini-api:import` | Importiert gewählte Endpoints (interaktiv). Optionen: `--fail-fast`, `--force`, `--mode`, `--url`, `--key`, `--per-page` |
+| `php artisan componist:import-from-live` | Universeller Import **aller** Tabellen-Endpoints von Live (Continue-on-Error). Optionen: `--mode=fresh\|update`, `--fail-fast`, `--url`, `--key`, `--per-page` |
 | `php artisan mini-api:config-from-database` | Hilft beim Generieren von Endpoint-Config aus dem Schema |
 
 ## Berechtigungen

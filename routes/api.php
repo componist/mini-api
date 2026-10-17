@@ -3,7 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use Componist\MiniApi\Http\Controllers\MiniApiController;
 
-Route::prefix('api')->middleware('throttle:60,1')->group(function (): void {
+// 300/min: Vollexporte (viele Endpoints + Pagination) sollen nicht sofort 429 liefern.
+Route::prefix('api')->middleware('throttle:300,1')->group(function (): void {
     $endpoints = config('mini-api.endpoints');
     if (! is_array($endpoints)) {
         return;

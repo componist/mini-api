@@ -16,15 +16,16 @@ class MiniApiRemoteClient
 {
     private const TIMEOUT_SECONDS = 180;
 
-    private const RETRY_TIMES = 2;
+    private const MAX_ATTEMPTS = 8;
 
-    private const RETRY_SLEEP_MS = 200;
+    private const MAX_PAGES = 500;
 
     public function __construct(
         private readonly string $baseUrl,
         private readonly string $apiKey,
         private readonly int $perPage,
         private readonly string $keyHeader = 'X-Api-Key',
+        private readonly int $requestDelayMs = 0,
     ) {}
 
     public function baseUrl(): string
@@ -38,6 +39,8 @@ class MiniApiRemoteClient
     public function pages(string $route): Generator
     {
         $page = 1;
+        $lastPage = 1;
+        $previousFingerprint = null;
 
         do {
             $response = $this->fetchPage($route, $page);
@@ -64,30 +67,87 @@ class MiniApiRemoteClient
                 );
             }
 
-            yield $page => array_values(array_filter($rows, 'is_array'));
-
-            // Ältere Server ignorieren `page` — ohne Header nur die erste Seite lesen, sonst Endlosschleife.
-            $lastPageHeader = $response->header(MiniApiQueryPager::HEADER_LAST_PAGE);
-            if ($lastPageHeader === '') {
+            /** @var list<array<string, mixed>> $list */
+            $list = array_values(array_filter($rows, 'is_array'));
+            if ($list === []) {
                 break;
             }
 
-            $lastPage = max(1, (int) $lastPageHeader);
+            $fingerprint = $this->pageFingerprint($list);
+            if ($previousFingerprint !== null && $fingerprint === $previousFingerprint) {
+                // Server ignoriert page – sonst Endlosschleife mit identischen Daten.
+                break;
+            }
+            $previousFingerprint = $fingerprint;
+
+            yield $page => $list;
+
+            $lastPageHeader = $response->header(MiniApiQueryPager::HEADER_LAST_PAGE);
+            if ($lastPageHeader !== '') {
+                $lastPage = max(1, (int) $lastPageHeader);
+                $page++;
+
+                continue;
+            }
+
+            // Ohne Header: volle Seite ⇒ weitere Seite versuchen; sonst fertig.
+            if (count($list) < $this->perPage) {
+                break;
+            }
+
             $page++;
-        } while ($page <= $lastPage);
+            $lastPage = $page;
+        } while ($page <= $lastPage && $page <= self::MAX_PAGES);
     }
 
     private function fetchPage(string $route, int $page): Response
     {
-        try {
-            return $this->request()->get($this->url($route), ['page' => $page, 'per_page' => $this->perPage]);
-        } catch (ConnectionException $exception) {
-            throw new MiniApiImportException(
-                "Live-API nicht erreichbar ({$this->baseUrl()}): {$exception->getMessage()}",
-                'URL, DNS und Firewall prüfen (MINI_API_IMPORT_URL / --url).',
-                previous: $exception,
-            );
+        $attempt = 0;
+
+        while ($attempt < self::MAX_ATTEMPTS) {
+            $attempt++;
+
+            try {
+                $response = $this->request()->get($this->url($route), [
+                    'page' => $page,
+                    'per_page' => $this->perPage,
+                ]);
+            } catch (ConnectionException $exception) {
+                if ($attempt >= self::MAX_ATTEMPTS) {
+                    throw new MiniApiImportException(
+                        "Live-API nicht erreichbar ({$this->baseUrl()}): {$exception->getMessage()}",
+                        'URL, DNS und Firewall prüfen (MINI_API_IMPORT_URL / --url).',
+                        previous: $exception,
+                    );
+                }
+
+                usleep(500_000 * $attempt);
+
+                continue;
+            }
+
+            $status = $response->status();
+            if (in_array($status, [429, 502, 503, 504], true) && $attempt < self::MAX_ATTEMPTS) {
+                // Live throttle ist oft 60/min – bei 429 länger warten.
+                $sleepSeconds = $status === 429
+                    ? min(90, 10 * $attempt)
+                    : min(30, 2 * $attempt);
+                sleep($sleepSeconds);
+
+                continue;
+            }
+
+            if ($this->requestDelayMs > 0) {
+                usleep($this->requestDelayMs * 1000);
+            }
+
+            return $response;
         }
+
+        throw new MiniApiImportException(
+            "Live-API nach ".self::MAX_ATTEMPTS." Versuchen nicht erreichbar für '{$route}'.",
+            'Rate-Limit oder Verbindungsprobleme – später erneut versuchen.',
+        );
     }
 
     private function httpFailure(string $route, int $page, Response $response): MiniApiImportException
@@ -107,7 +167,7 @@ class MiniApiRemoteClient
             ],
             $status === 429 => [
                 "Live-API Rate-Limit (HTTP 429) für '{$route}' (Seite {$page}){$suffix}",
-                'Kurz warten und erneut versuchen, oder --per-page erhöhen und weniger parallel laufen lassen.',
+                'Kurz warten und erneut versuchen. Optional mini-api.import.request_delay_ms erhöhen.',
             ],
             $status >= 500 => [
                 "Live-Serverfehler (HTTP {$status}) für '{$route}' (Seite {$page}){$suffix}",
@@ -141,13 +201,20 @@ class MiniApiRemoteClient
     {
         return Http::withHeaders([$this->keyHeader => $this->apiKey])
             ->acceptJson()
-            ->timeout(self::TIMEOUT_SECONDS)
-            ->retry(
-                self::RETRY_TIMES,
-                self::RETRY_SLEEP_MS,
-                static fn (\Throwable $exception): bool => $exception instanceof ConnectionException,
-                throw: false,
-            );
+            ->timeout(self::TIMEOUT_SECONDS);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function pageFingerprint(array $rows): string
+    {
+        $ids = [];
+        foreach (array_slice($rows, 0, 5) as $row) {
+            $ids[] = (string) ($row['id'] ?? '');
+        }
+
+        return implode(',', $ids).':'.count($rows);
     }
 
     private function url(string $route): string

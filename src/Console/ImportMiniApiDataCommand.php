@@ -74,6 +74,7 @@ class ImportMiniApiDataCommand extends Command
             $key,
             (int) ($this->option('per-page') ?: config('mini-api.import.per_page', 500)),
             (string) config('mini-api.auth.header', 'X-Api-Key'),
+            max(0, (int) config('mini-api.import.request_delay_ms', 1100)),
         );
     }
 

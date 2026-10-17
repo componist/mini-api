@@ -11,7 +11,9 @@ use Componist\MiniApi\Domain\MiniApiImportResult;
 use Componist\MiniApi\Infrastructure\MiniApiRemoteClient;
 use Componist\MiniApi\Infrastructure\MiniApiSchemaGuard;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use JsonException;
 use Throwable;
 
@@ -106,7 +108,11 @@ class MiniApiImportService
     private function write(string $table, array $rows, array $columns, array $primaryKey): int
     {
         try {
-            $records = array_map(fn (mixed $row): array => $this->toRecord((array) $row, $columns), $rows);
+            $records = [];
+            foreach ($rows as $row) {
+                $record = $this->toRecord((array) $row, $columns);
+                $records[] = $this->applyColumnDefaults($table, $record, $primaryKey);
+            }
         } catch (JsonException $exception) {
             throw new MiniApiImportException(
                 "JSON in Spalten von '{$table}' konnte nicht kodiert werden: {$exception->getMessage()}",
@@ -115,13 +121,107 @@ class MiniApiImportService
             );
         }
 
-        $chunkSize = max(1, intdiv(self::MAX_BOUND_PARAMETERS, max(1, count($columns))));
+        $writeColumns = $this->columnsForWrite($records, $columns);
+        $chunkSize = max(1, intdiv(self::MAX_BOUND_PARAMETERS, max(1, count($writeColumns))));
 
         foreach (array_chunk($records, $chunkSize) as $chunk) {
-            $this->persist($table, $chunk, $columns, $primaryKey);
+            $this->persist($table, $chunk, $writeColumns, $primaryKey);
         }
 
         return count($records);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $records
+     * @param  list<string>  $columns
+     * @return list<string>
+     */
+    private function columnsForWrite(array $records, array $columns): array
+    {
+        $extra = [];
+        foreach ($records as $record) {
+            foreach (array_keys($record) as $column) {
+                if (! in_array($column, $columns, true) && ! in_array($column, $extra, true)) {
+                    $extra[] = $column;
+                }
+            }
+        }
+
+        return array_values(array_merge($columns, $extra));
+    }
+
+    /**
+     * Ergänzt lokal nötige Spalten, die Live bewusst nicht liefert (z. B. password).
+     *
+     * @param  array<string, mixed>  $record
+     * @param  list<string>  $primaryKey
+     * @return array<string, mixed>
+     */
+    private function applyColumnDefaults(string $table, array $record, array $primaryKey): array
+    {
+        /** @var array<string, mixed> $defaults */
+        $defaults = (array) config("mini-api.import.column_defaults.{$table}", []);
+        if ($defaults === []) {
+            return $record;
+        }
+
+        $exists = $primaryKey !== [] && $this->rowExists($table, $record, $primaryKey);
+
+        foreach ($defaults as $column => $value) {
+            if (! is_string($column) || $column === '') {
+                continue;
+            }
+
+            if (array_key_exists($column, $record) && $record[$column] !== null && $record[$column] !== '') {
+                continue;
+            }
+
+            // Bestehende Zeilen: Defaults wie password nicht überschreiben.
+            if ($exists) {
+                continue;
+            }
+
+            $record[$column] = $this->resolveDefaultValue($value);
+        }
+
+        return $record;
+    }
+
+    private function resolveDefaultValue(mixed $value): mixed
+    {
+        if (! is_string($value)) {
+            return $value;
+        }
+
+        if ($value === '__hash:import-placeholder__') {
+            return Hash::make('import-placeholder');
+        }
+
+        // z. B. __random:40__ für NOT-NULL-Token-Spalten, die Live bewusst nicht liefert.
+        if (preg_match('/^__random:(\d+)__$/', $value, $matches) === 1) {
+            return Str::random(max(1, min(255, (int) $matches[1])));
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param  array<string, mixed>  $record
+     * @param  list<string>  $primaryKey
+     */
+    private function rowExists(string $table, array $record, array $primaryKey): bool
+    {
+        $query = DB::table($table);
+
+        foreach ($primaryKey as $column) {
+            if (! array_key_exists($column, $record)) {
+                return false;
+            }
+
+            $query->where($column, $record[$column]);
+        }
+
+        return $query->exists();
     }
 
     /**
@@ -134,6 +234,18 @@ class MiniApiImportService
         if ($records === []) {
             return;
         }
+
+        // Nur Spalten schreiben, die in allen Records (oder defaults) vorkommen.
+        $records = array_map(function (array $record) use ($columns): array {
+            $filtered = [];
+            foreach ($columns as $column) {
+                if (array_key_exists($column, $record)) {
+                    $filtered[$column] = $record[$column];
+                }
+            }
+
+            return $filtered;
+        }, $records);
 
         if ($primaryKey === []) {
             DB::table($table)->insert($records);

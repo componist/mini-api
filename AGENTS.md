@@ -10,7 +10,7 @@ Read-only GET-API aus `config/mini-api.php` (Tabelle oder Eloquent-Model).
 src/Domain/{MiniApiIdentifierRules,MiniApiPageRequest,MiniApiImportMode,MiniApiImportResult,MiniApiImportException}.php
 src/Application/{MiniApiAuthService,MiniApiImportService}.php
 src/Infrastructure/{MiniApiSchemaGuard,MiniApiQueryPager,MiniApiJoinQueryBuilder,MiniApiRemoteClient}.php
-src/Console/ImportMiniApiDataCommand.php
+src/Console/{ImportMiniApiDataCommand,ImportFromLiveCommand}.php
 src/Http/Controllers/{MiniApiController,MiniApiBuilderController}.php
 config/mini-api.php
 ```
@@ -32,10 +32,12 @@ config/mini-api.php
 - Import: nur Table-Endpoints, Guard-Filter auch lokal, Transaktion pro Tabelle, in production gesperrt. `fresh` nutzt `delete` (kein `truncate`), sonst greift der Rollback nicht. `update` entfernt vor Upsert Unique-Konflikte (anderer PK, gleicher Unique-Key).
 - UX: `▶ route → table` / `✓ N Datensätze` / `✗ Fehler` + Hint. Standard: Continue-on-Error; `--fail-fast` bricht ab. Summary am Ende.
 - Fehler: `MiniApiImportException` mit optionalem `hint`; DB/HTTP werden in freundliche Meldungen gewrappt (`fromThrowable`, RemoteClient-Statuscodes).
+- `componist:import-from-live`: universeller Import aller table-Endpoints; Reihenfolge `import.table_order`; Defaults `import.column_defaults` (z. B. `password` → `__hash:import-placeholder__`).
+- App-Wrapper dürfen nur projektspezifische Nacharbeiten enthalten – Import-Kern bleibt im Package.
 
 ## Config-Keys
 
-`mini-api.auth`, `endpoints`, `blocked_tables`, `blocked_fields`, `max_rows`, `import`, `builder`
+`mini-api.auth`, `endpoints`, `blocked_tables`, `blocked_fields` (kein generisches `token`), `max_rows`, `import`, `builder`
 
 ## Tests
 

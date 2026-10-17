@@ -34,6 +34,11 @@ return [
         'database_connectings',
     ],
 
+    /*
+    | Globale Spalten-Blockliste (Export + Import-Filter).
+    | Kein generisches `token`: zu viele fachliche Token (Public-Links, Transaktionen).
+    | Geheimnisse pro Endpoint steuern (columns weglassen) oder hier nur echte Secrets.
+    */
     'blocked_fields' => [
         'password',
         'remember_token',
@@ -41,7 +46,6 @@ return [
         'two_factor_recovery_codes',
         'two_factor_code',
         'two_factor_expires_at',
-        'token',
         'auth_token',
         'secret_token',
         'database_password',
@@ -54,13 +58,22 @@ return [
     'endpoints' => [],
 
     /*
-    | Import (mini-api:import): zieht Daten per HTTP aus der Mini-API der Live-Anwendung.
+    | Import (mini-api:import / componist:import-from-live):
+    | zieht Daten per HTTP aus der Mini-API der Live-Anwendung.
     | Nur außerhalb von production nutzbar. Key getrennt vom eigenen MINI_API_KEY halten.
+    |
+    | table_order: bevorzugte Tabellen-Reihenfolge (Rest alphabetisch)
+    | column_defaults: fehlende Spalten beim Schreiben (z. B. password → __hash:import-placeholder__)
     */
     'import' => [
         'url' => env('MINI_API_IMPORT_URL'),
         'key' => env('MINI_API_IMPORT_KEY'),
         'per_page' => (int) env('MINI_API_IMPORT_PER_PAGE', 500),
+        // Pause zwischen Requests (ms), schützt vor throttle:60,1 auf älteren Live-Servern.
+        'request_delay_ms' => (int) env('MINI_API_IMPORT_REQUEST_DELAY_MS', 1100),
+        'table_order' => [],
+        // Beispiele: 'users' => ['password' => '__hash:import-placeholder__'], 'links' => ['token' => '__random:40__']
+        'column_defaults' => [],
     ],
 
     'builder' => [
