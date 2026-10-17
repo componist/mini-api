@@ -60,6 +60,19 @@ class MiniApiImportCommandTest extends TestCase
             ->assertJsonCount(3);
     }
 
+    public function test_api_without_page_parameter_exposes_headers_when_truncated(): void
+    {
+        config(['mini-api.endpoints.users.limit' => 2]);
+        User::factory()->count(5)->create();
+
+        $this->withHeader('X-Api-Key', 'test-mini-api-key')
+            ->getJson('/api/users-liste')
+            ->assertOk()
+            ->assertHeader('X-Total-Count', '5')
+            ->assertHeader('X-Last-Page', '3')
+            ->assertJsonCount(2);
+    }
+
     public function test_per_page_is_capped_by_endpoint_limit(): void
     {
         config(['mini-api.endpoints.users.limit' => 2]);
@@ -83,11 +96,50 @@ class MiniApiImportCommandTest extends TestCase
             [['id' => 3, 'name' => 'drei', 'note' => null]],
         ]);
 
-        $this->runImport('update')->expectsOutputToContain('3 Zeilen verarbeitet')->assertSuccessful();
+        $this->runImport('update')->expectsOutputToContain('3 Datensätze')->assertSuccessful();
 
         $this->assertSame(4, DB::table(self::TABLE)->count());
         $this->assertSame('neu', DB::table(self::TABLE)->where('id', 1)->value('name'));
         $this->assertSame('lokal', DB::table(self::TABLE)->where('id', 99)->value('name'));
+    }
+
+    public function test_update_mode_clears_unique_conflicts_with_different_primary_key(): void
+    {
+        Schema::dropIfExists(self::TABLE);
+        Schema::create(self::TABLE, function ($table): void {
+            $table->unsignedBigInteger('id')->primary();
+            $table->unsignedBigInteger('category_id');
+            $table->string('locale', 5);
+            $table->string('name');
+            $table->unique(['category_id', 'locale']);
+        });
+
+        config([
+            'mini-api.endpoints.items' => [
+                'route' => 'items-liste',
+                'table' => self::TABLE,
+                'columns' => ['id', 'category_id', 'locale', 'name'],
+            ],
+        ]);
+
+        DB::table(self::TABLE)->insert([
+            ['id' => 1, 'category_id' => 1, 'locale' => 'de', 'name' => 'alt-1'],
+            ['id' => 280, 'category_id' => 280, 'locale' => 'de', 'name' => 'alt-280'],
+        ]);
+
+        $this->fakeLivePages([[
+            ['id' => 1, 'category_id' => 280, 'locale' => 'de', 'name' => 'live'],
+        ]]);
+
+        $this->runImport('update')->assertSuccessful();
+
+        $this->assertSame(1, DB::table(self::TABLE)->count());
+        $row = DB::table(self::TABLE)->first();
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row->id);
+        $this->assertSame(280, (int) $row->category_id);
+        $this->assertSame('de', $row->locale);
+        $this->assertSame('live', $row->name);
     }
 
     public function test_fresh_mode_replaces_table_content(): void
@@ -181,6 +233,99 @@ class MiniApiImportCommandTest extends TestCase
         $this->runImport('update')->assertSuccessful();
 
         Http::assertSentCount(1);
+    }
+
+    public function test_one_endpoint_failure_does_not_block_the_rest(): void
+    {
+        Schema::create('mini_api_import_other', function ($table): void {
+            $table->unsignedBigInteger('id')->primary();
+            $table->string('name');
+        });
+
+        config([
+            'mini-api.endpoints.broken' => [
+                'route' => 'broken-liste',
+                'table' => self::TABLE,
+                'columns' => ['id', 'name', 'note'],
+            ],
+            'mini-api.endpoints.other' => [
+                'route' => 'other-liste',
+                'table' => 'mini_api_import_other',
+                'columns' => ['id', 'name'],
+            ],
+        ]);
+
+        Http::fake([
+            self::LIVE_URL.'/api/broken-liste*' => Http::response(['error' => 'boom'], 500),
+            self::LIVE_URL.'/api/other-liste*' => Http::response([['id' => 1, 'name' => 'ok']], 200, ['X-Last-Page' => '1']),
+        ]);
+
+        $this->artisan('mini-api:import', [
+            'endpoint' => ['broken', 'other'],
+            '--url' => self::LIVE_URL,
+            '--key' => 'live-key',
+            '--mode' => 'update',
+            '--force' => true,
+        ])
+            ->expectsOutputToContain('Live-Serverfehler')
+            ->expectsOutputToContain('▶ other-liste')
+            ->expectsOutputToContain('1 Datensätze')
+            ->assertFailed();
+
+        $this->assertSame('ok', DB::table('mini_api_import_other')->where('id', 1)->value('name'));
+        $this->assertSame(0, DB::table(self::TABLE)->count());
+    }
+
+    public function test_fail_fast_stops_after_first_error(): void
+    {
+        Schema::create('mini_api_import_other', function ($table): void {
+            $table->unsignedBigInteger('id')->primary();
+            $table->string('name');
+        });
+
+        config([
+            'mini-api.endpoints.broken' => [
+                'route' => 'broken-liste',
+                'table' => self::TABLE,
+                'columns' => ['id', 'name', 'note'],
+            ],
+            'mini-api.endpoints.other' => [
+                'route' => 'other-liste',
+                'table' => 'mini_api_import_other',
+                'columns' => ['id', 'name'],
+            ],
+        ]);
+
+        Http::fake([
+            self::LIVE_URL.'/api/broken-liste*' => Http::response('Fehler', 500),
+            self::LIVE_URL.'/api/other-liste*' => Http::response([['id' => 1, 'name' => 'ok']]),
+        ]);
+
+        $this->artisan('mini-api:import', [
+            'endpoint' => ['broken', 'other'],
+            '--url' => self::LIVE_URL,
+            '--key' => 'live-key',
+            '--mode' => 'update',
+            '--force' => true,
+            '--fail-fast' => true,
+        ])
+            ->expectsOutputToContain('Abbruch (--fail-fast)')
+            ->assertFailed();
+
+        $this->assertSame(0, DB::table('mini_api_import_other')->count());
+        Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'other-liste'));
+    }
+
+    public function test_http_401_shows_friendly_hint(): void
+    {
+        Http::fake([
+            self::LIVE_URL.'/api/items-liste*' => Http::response(['error' => 'Unauthorized'], 401),
+        ]);
+
+        $this->runImport('update')
+            ->expectsOutputToContain('HTTP 401')
+            ->expectsOutputToContain('API-Key prüfen')
+            ->assertFailed();
     }
 
     /**

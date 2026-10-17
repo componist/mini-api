@@ -44,7 +44,7 @@ Beispiel-Endpoint in Config:
 
 ## Pagination
 
-Ohne Parameter liefert ein Endpoint wie bisher bis zu `limit` Zeilen. Mit `?page=N&per_page=M` wird stabil nach Primärschlüssel sortiert paginiert (`per_page` ist durch `limit`/`max_rows` gedeckelt). Die Antwort bleibt ein JSON-Array, die Meta-Infos stehen in den Headern `X-Total-Count` und `X-Last-Page`. Ohne Primärschlüssel: `'order_by' => 'spalte'` im Endpoint setzen.
+Ohne Parameter liefert ein Endpoint wie bisher bis zu `limit` Zeilen. Passt die Tabelle nicht in dieses Limit, setzt die API trotzdem `X-Total-Count` und `X-Last-Page`, damit Clients weitere Seiten nachladen können (kein stiller Datenverlust). Mit `?page=N&per_page=M` wird stabil nach Primärschlüssel sortiert paginiert (`per_page` ist durch `limit`/`max_rows` gedeckelt). Die Antwort bleibt ein JSON-Array. Ohne Primärschlüssel: `'order_by' => 'spalte'` im Endpoint setzen.
 
 ## Daten der Live-Anwendung importieren
 
@@ -53,11 +53,31 @@ Ohne Parameter liefert ein Endpoint wie bisher bis zu `limit` Zeilen. Mit `?page
 php artisan mini-api:import                       # interaktiv: Endpoints + Modus wählen
 php artisan mini-api:import posts --mode=update   # nicht interaktiv
 php artisan mini-api:import posts --mode=fresh --force
+php artisan mini-api:import --mode=fresh --force  # alle (interaktiv ausgewählt)
+```
+
+Terminal-Ausgabe (Beispiel):
+
+```text
+Starte Mini-API-Import (3 Endpoints, Modus: update)...
+Basis: https://live.example.com
+
+▶ posts → posts...
+  ✓ 42 Datensätze.
+▶ broken → broken...
+  ✗ Live-Serverfehler (HTTP 500) für 'broken' (Seite 1)
+    → Live-Log prüfen. …
+▶ tags → tags...
+  ✓ 7 Datensätze.
+
+Import mit Fehlern: 2/3 ok, 1 fehlgeschlagen, 49 Datensätze übernommen.
 ```
 
 - Quelle sind die **lokalen** Endpoint-Definitionen (`table`, `columns`, `route`); die Live-App muss die Endpoints mit gleicher Route bereitstellen und die Pagination dieser Version kennen (sonst wird nur die erste Seite gelesen).
-- `update`: Upsert per Primärschlüssel (muss in `columns` stehen), nichts wird gelöscht.
-- `fresh`: löscht den Inhalt der gewählten Tabellen (nicht der ganzen Datenbank) und importiert neu, mit Bestätigung. Pro Tabelle in einer Transaktion: bei einem Fehler bleibt der alte Stand.
+- **Fehler stoppen den Rest nicht** – jeder Endpoint wird einzeln verarbeitet. Mit `--fail-fast` beim ersten Fehler abbrechen.
+- `update`: Upsert per Primärschlüssel (muss in `columns` stehen). Zeilen mit kollidierenden Unique-Keys (nicht PK) unter anderer ID werden vor dem Upsert entfernt, damit kein `1062 Duplicate entry` entsteht.
+- `fresh`: löscht den Inhalt der gewählten Tabellen (nicht der ganzen Datenbank) und importiert neu, mit Bestätigung. Pro Tabelle in einer Transaktion: bei einem Fehler bleibt der alte Stand dieser Tabelle.
+- HTTP-/DB-Fehler erscheinen mit kurzer Erklärung und Tipp (z. B. API-Key, fehlende Live-Route, Unique-Konflikt).
 - Lokal fehlende oder gesperrte Spalten (`blocked_fields`, `blocked_tables`) werden übersprungen und gemeldet. Gesperrte Felder wie `password` kommen deshalb nie mit.
 - Fremdschlüssel-Prüfungen sind während des Imports deaktiviert.
 - Model-Endpoints und Joins werden nicht importiert. In `production` ist der Command gesperrt.
@@ -68,7 +88,7 @@ php artisan mini-api:import posts --mode=fresh --force
 | Command | Beschreibung |
 |---------|--------------|
 | `php artisan mini-api:generate-key` | Erzeugt einen API-Key |
-| `php artisan mini-api:import` | Importiert Live-Daten über die Mini-API (fresh/update) |
+| `php artisan mini-api:import` | Importiert Live-Daten über die Mini-API (fresh/update). Optionen: `--fail-fast`, `--force`, `--mode`, `--url`, `--key`, `--per-page` |
 | `php artisan mini-api:config-from-database` | Hilft beim Generieren von Endpoint-Config aus dem Schema |
 
 ## Berechtigungen

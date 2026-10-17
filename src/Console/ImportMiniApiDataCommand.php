@@ -9,6 +9,7 @@ use Componist\MiniApi\Domain\MiniApiImportException;
 use Componist\MiniApi\Domain\MiniApiImportMode;
 use Componist\MiniApi\Infrastructure\MiniApiRemoteClient;
 use Illuminate\Console\Command;
+use Throwable;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\multiselect;
@@ -22,7 +23,8 @@ class ImportMiniApiDataCommand extends Command
                             {--key= : API-Key der Live-Anwendung (Standard: mini-api.import.key)}
                             {--mode= : fresh oder update}
                             {--per-page= : Zeilen pro Request}
-                            {--force : Bestätigung im Fresh-Modus überspringen}';
+                            {--force : Bestätigung im Fresh-Modus überspringen}
+                            {--fail-fast : Beim ersten Fehler abbrechen (Standard: weiter mit nächstem Endpoint)}';
 
     protected $description = 'Importiert Daten der Live-Anwendung über deren Mini-API anhand der lokalen Endpoint-Config';
 
@@ -61,7 +63,8 @@ class ImportMiniApiDataCommand extends Command
         $key = (string) ($this->option('key') ?: config('mini-api.import.key'));
 
         if ($url === '' || $key === '') {
-            $this->error('URL und API-Key der Live-Anwendung fehlen (MINI_API_IMPORT_URL / MINI_API_IMPORT_KEY oder --url / --key).');
+            $this->error('URL und API-Key der Live-Anwendung fehlen.');
+            $this->line('  Setze MINI_API_IMPORT_URL / MINI_API_IMPORT_KEY in der .env oder nutze --url / --key.');
 
             return null;
         }
@@ -80,18 +83,33 @@ class ImportMiniApiDataCommand extends Command
     private function resolveEndpoints(): array
     {
         $available = $this->importableEndpoints();
-        $requested = (array) $this->argument('endpoint');
+        if ($available === []) {
+            $this->error('Keine importierbaren Endpoints in config/mini-api.php.');
+            $this->line('  Nur Einträge mit `table` (ohne `model`) werden importiert.');
+
+            return [];
+        }
+
+        $requested = array_values(array_filter(
+            (array) $this->argument('endpoint'),
+            static fn (mixed $value): bool => is_string($value) && $value !== '',
+        ));
 
         if ($requested === []) {
-            $requested = $available === [] ? [] : multiselect(
+            $options = [];
+            foreach ($available as $key => $config) {
+                $options[$key] = $key.' → '.(string) $config['table'];
+            }
+
+            $requested = multiselect(
                 'Welche Endpoints sollen importiert werden?',
-                array_map(fn (array $config): string => (string) $config['table'], $available),
+                $options,
                 required: true,
             );
         }
 
         foreach (array_diff($requested, array_keys($available)) as $unknown) {
-            $this->warn("Endpoint '{$unknown}' übersprungen: nicht vorhanden oder kein Tabellen-Endpoint.");
+            $this->warn("  ⚠ Endpoint '{$unknown}' übersprungen: nicht vorhanden oder kein Tabellen-Endpoint.");
         }
 
         return array_intersect_key($available, array_flip($requested));
@@ -150,21 +168,85 @@ class ImportMiniApiDataCommand extends Command
      */
     private function runImport(array $endpoints, MiniApiImportMode $mode, MiniApiRemoteClient $client): int
     {
-        $failed = false;
+        $total = count($endpoints);
+        $ok = 0;
+        $failed = [];
+        $rowsTotal = 0;
+
+        $this->info("Starte Mini-API-Import ({$total} Endpoints, Modus: {$mode->value})...");
+        $this->line('Basis: '.$client->baseUrl());
+        $this->newLine();
 
         foreach ($endpoints as $key => $config) {
+            $route = (string) ($config['route'] ?? $key);
+            $table = (string) ($config['table'] ?? $key);
+            $this->line("▶ {$route} → {$table}...");
+
             try {
-                $result = $this->importService->import((string) ($config['route'] ?? $key), $config, $mode, $client);
-                $this->info("{$result->table}: {$result->rows} Zeilen verarbeitet.");
+                $result = $this->importService->import($route, $config, $mode, $client);
+                $ok++;
+                $rowsTotal += $result->rows;
+                $this->info("  ✓ {$result->rows} Datensätze.");
+
                 if ($result->skippedColumns !== []) {
-                    $this->warn('  Übersprungene Spalten (lokal nicht vorhanden oder gesperrt): '.implode(', ', $result->skippedColumns));
+                    $this->warn('  ⚠ Übersprungene Spalten (lokal fehlend/gesperrt): '.implode(', ', $result->skippedColumns));
                 }
             } catch (MiniApiImportException $exception) {
-                $failed = true;
-                $this->error("{$key}: {$exception->getMessage()}");
+                $failed[$key] = $exception;
+                $this->renderFailure($exception);
+
+                if ($this->option('fail-fast')) {
+                    $this->warn('  Abbruch (--fail-fast).');
+                    break;
+                }
+            } catch (Throwable $throwable) {
+                $exception = MiniApiImportException::fromThrowable($throwable, $table, $route);
+                $failed[$key] = $exception;
+                $this->renderFailure($exception);
+                report($throwable);
+
+                if ($this->option('fail-fast')) {
+                    $this->warn('  Abbruch (--fail-fast).');
+                    break;
+                }
             }
         }
 
-        return $failed ? self::FAILURE : self::SUCCESS;
+        return $this->renderSummary($ok, $failed, $rowsTotal, $total);
+    }
+
+    private function renderFailure(MiniApiImportException $exception): void
+    {
+        $this->error('  ✗ '.$exception->getMessage());
+        if ($exception->hint !== null && $exception->hint !== '') {
+            $this->line('    → '.$exception->hint);
+        }
+    }
+
+    /**
+     * @param  array<string, MiniApiImportException>  $failed
+     */
+    private function renderSummary(int $ok, array $failed, int $rowsTotal, int $total): int
+    {
+        $this->newLine();
+
+        if ($failed === []) {
+            $this->info("Import abgeschlossen: {$ok}/{$total} Endpoints ok, {$rowsTotal} Datensätze.");
+
+            return self::SUCCESS;
+        }
+
+        $failCount = count($failed);
+        $this->warn("Import mit Fehlern: {$ok}/{$total} ok, {$failCount} fehlgeschlagen, {$rowsTotal} Datensätze übernommen.");
+        $this->line('Fehlgeschlagen:');
+        foreach ($failed as $key => $exception) {
+            $this->line("  • {$key}: ".$exception->getMessage());
+        }
+
+        if (! $this->option('fail-fast') && $ok > 0) {
+            $this->line('Hinweis: Erfolgreiche Endpoints bleiben erhalten. Fehlende erneut mit z. B. `php artisan mini-api:import <key> --mode=…` nachziehen.');
+        }
+
+        return self::FAILURE;
     }
 }

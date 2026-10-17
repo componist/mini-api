@@ -142,6 +142,33 @@ class MiniApiSchemaGuard
     }
 
     /**
+     * Nicht-primäre Unique-Indexes (z. B. category_id + locale).
+     *
+     * @return list<list<string>>
+     */
+    public static function uniqueIndexColumns(string $table): array
+    {
+        $indexes = [];
+
+        foreach (Schema::getIndexes($table) as $index) {
+            if (empty($index['unique']) || ! empty($index['primary'])) {
+                continue;
+            }
+
+            $columns = array_values(array_filter(
+                $index['columns'] ?? [],
+                static fn (mixed $column): bool => is_string($column) && $column !== '',
+            ));
+
+            if ($columns !== []) {
+                $indexes[] = $columns;
+            }
+        }
+
+        return $indexes;
+    }
+
+    /**
      * Stabile Sortierung ist Voraussetzung für Pagination: konfigurierte `order_by`-Spalte, sonst erste Primärschlüssel-Spalte.
      */
     public static function resolveOrderColumn(string $table, mixed $configured): ?string

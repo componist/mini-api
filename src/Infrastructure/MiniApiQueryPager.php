@@ -20,8 +20,25 @@ final class MiniApiQueryPager
      */
     public static function fetch(Builder|EloquentBuilder $query, int $limit, ?MiniApiPageRequest $page, ?string $orderColumn): array
     {
-        if ($page === null || $orderColumn === null) {
+        // Ohne order_by/PK keine stabile Pagination – hartes Limit, keine Meta-Header.
+        if ($orderColumn === null) {
             return [$query->limit($limit)->get(), []];
+        }
+
+        // Ohne page-Parameter: kleine Tabellen unpaginiert; bei Truncation Meta-Header setzen,
+        // damit Clients (Import) weitere Seiten nachladen können statt still Daten zu verlieren.
+        if ($page === null) {
+            $total = (clone $query)->count();
+            $rows = (clone $query)->orderBy($orderColumn)->limit($limit)->get();
+
+            if ($total <= $limit) {
+                return [$rows, []];
+            }
+
+            return [$rows, [
+                self::HEADER_TOTAL => (string) $total,
+                self::HEADER_LAST_PAGE => (string) max(1, (int) ceil($total / $limit)),
+            ]];
         }
 
         $total = (clone $query)->count();

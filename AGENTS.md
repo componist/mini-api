@@ -27,9 +27,11 @@ config/mini-api.php
 
 ## Pagination & Import
 
-- `?page`/`per_page` aktivieren Pagination (Sortierung: Primärschlüssel oder `order_by`); Header `X-Total-Count`, `X-Last-Page`. Ohne `page` unverändertes Verhalten.
+- `?page`/`per_page` aktivieren Pagination (Sortierung: Primärschlüssel oder `order_by`); Header `X-Total-Count`, `X-Last-Page`. Ohne `page`: bis `max_rows`; bei Truncation trotzdem Meta-Header setzen.
 - `mini-api:import` holt Seiten per HTTP von der Live-API (`MiniApiRemoteClient`) und schreibt in die lokale Tabelle des Endpoints (`MiniApiImportService`).
-- Import: nur Table-Endpoints, Guard-Filter auch lokal, Transaktion pro Tabelle, in production gesperrt. `fresh` nutzt `delete` (kein `truncate`), sonst greift der Rollback nicht.
+- Import: nur Table-Endpoints, Guard-Filter auch lokal, Transaktion pro Tabelle, in production gesperrt. `fresh` nutzt `delete` (kein `truncate`), sonst greift der Rollback nicht. `update` entfernt vor Upsert Unique-Konflikte (anderer PK, gleicher Unique-Key).
+- UX: `▶ route → table` / `✓ N Datensätze` / `✗ Fehler` + Hint. Standard: Continue-on-Error; `--fail-fast` bricht ab. Summary am Ende.
+- Fehler: `MiniApiImportException` mit optionalem `hint`; DB/HTTP werden in freundliche Meldungen gewrappt (`fromThrowable`, RemoteClient-Statuscodes).
 
 ## Config-Keys
 

@@ -12,6 +12,8 @@ use Componist\MiniApi\Infrastructure\MiniApiRemoteClient;
 use Componist\MiniApi\Infrastructure\MiniApiSchemaGuard;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use JsonException;
+use Throwable;
 
 class MiniApiImportService
 {
@@ -24,28 +26,51 @@ class MiniApiImportService
     public function import(string $route, array $config, MiniApiImportMode $mode, MiniApiRemoteClient $client): MiniApiImportResult
     {
         $table = MiniApiIdentifierRules::sanitizeIdentifier((string) ($config['table'] ?? ''));
+        if ($table === '') {
+            throw new MiniApiImportException(
+                "Endpoint ohne gültige Tabelle (Route {$route}).",
+                'In config/mini-api.php ein `table`-Feld setzen (Model-Endpoints sind nicht importierbar).',
+            );
+        }
+
         $requested = array_values(array_filter((array) ($config['columns'] ?? []), 'is_string'));
+        if ($requested === []) {
+            throw new MiniApiImportException(
+                "Endpoint '{$route}' hat keine Spalten definiert.",
+                'In config/mini-api.php `columns` als Liste setzen (kein *).',
+            );
+        }
+
         $columns = MiniApiSchemaGuard::filterColumns($table, $requested);
 
         if ($columns === []) {
-            throw new MiniApiImportException("Tabelle '{$table}' ist nicht erlaubt oder hat keine importierbaren Spalten.");
+            throw new MiniApiImportException(
+                "Tabelle '{$table}' ist nicht erlaubt oder hat keine importierbaren Spalten.",
+                'blocked_tables / blocked_fields prüfen, Migrationen ausführen, Spaltennamen abgleichen.',
+            );
         }
 
         $primaryKey = $this->resolvePrimaryKey($table, $columns, $mode);
         $rows = 0;
 
-        Schema::withoutForeignKeyConstraints(function () use ($route, $table, $columns, $primaryKey, $mode, $client, &$rows): void {
-            DB::transaction(function () use ($route, $table, $columns, $primaryKey, $mode, $client, &$rows): void {
-                if ($mode === MiniApiImportMode::Fresh) {
-                    // delete statt truncate: TRUNCATE committet implizit und würde den Rollback aushebeln.
-                    DB::table($table)->delete();
-                }
+        try {
+            Schema::withoutForeignKeyConstraints(function () use ($route, $table, $columns, $primaryKey, $mode, $client, &$rows): void {
+                DB::transaction(function () use ($route, $table, $columns, $primaryKey, $mode, $client, &$rows): void {
+                    if ($mode === MiniApiImportMode::Fresh) {
+                        // delete statt truncate: TRUNCATE committet implizit und würde den Rollback aushebeln.
+                        DB::table($table)->delete();
+                    }
 
-                foreach ($client->pages($route) as $pageRows) {
-                    $rows += $this->write($table, $pageRows, $columns, $primaryKey);
-                }
+                    foreach ($client->pages($route) as $pageRows) {
+                        $rows += $this->write($table, $pageRows, $columns, $primaryKey);
+                    }
+                });
             });
-        });
+        } catch (MiniApiImportException $exception) {
+            throw $exception;
+        } catch (Throwable $throwable) {
+            throw MiniApiImportException::fromThrowable($throwable, $table, $route);
+        }
 
         return new MiniApiImportResult($table, $rows, array_values(array_diff($requested, $columns)));
     }
@@ -62,7 +87,12 @@ class MiniApiImportService
 
         $primaryKey = MiniApiSchemaGuard::primaryKeyColumns($table);
         if ($primaryKey === [] || array_diff($primaryKey, $columns) !== []) {
-            throw new MiniApiImportException("Update-Modus benötigt den Primärschlüssel von '{$table}' in den Endpoint-Spalten.");
+            $needed = $primaryKey === [] ? 'id (Primärschlüssel)' : implode(', ', $primaryKey);
+
+            throw new MiniApiImportException(
+                "Update-Modus benötigt den Primärschlüssel von '{$table}' in den Endpoint-Spalten ({$needed}).",
+                'Spalten in config/mini-api.php ergänzen oder `--mode=fresh` verwenden.',
+            );
         }
 
         return $primaryKey;
@@ -75,8 +105,17 @@ class MiniApiImportService
      */
     private function write(string $table, array $rows, array $columns, array $primaryKey): int
     {
-        $records = array_map(fn (mixed $row): array => $this->toRecord((array) $row, $columns), $rows);
-        $chunkSize = max(1, intdiv(self::MAX_BOUND_PARAMETERS, count($columns)));
+        try {
+            $records = array_map(fn (mixed $row): array => $this->toRecord((array) $row, $columns), $rows);
+        } catch (JsonException $exception) {
+            throw new MiniApiImportException(
+                "JSON in Spalten von '{$table}' konnte nicht kodiert werden: {$exception->getMessage()}",
+                'Array-/JSON-Felder in der Live-Antwort prüfen.',
+                previous: $exception,
+            );
+        }
+
+        $chunkSize = max(1, intdiv(self::MAX_BOUND_PARAMETERS, max(1, count($columns))));
 
         foreach (array_chunk($records, $chunkSize) as $chunk) {
             $this->persist($table, $chunk, $columns, $primaryKey);
@@ -92,11 +131,18 @@ class MiniApiImportService
      */
     private function persist(string $table, array $records, array $columns, array $primaryKey): void
     {
+        if ($records === []) {
+            return;
+        }
+
         if ($primaryKey === []) {
             DB::table($table)->insert($records);
 
             return;
         }
+
+        // Verhindert 1062, wenn Unique-Keys (nicht PK) lokal unter anderer ID liegen.
+        $this->clearUniqueConflicts($table, $records, $primaryKey);
 
         $updatable = array_values(array_diff($columns, $primaryKey));
         if ($updatable === []) {
@@ -106,6 +152,44 @@ class MiniApiImportService
         }
 
         DB::table($table)->upsert($records, $primaryKey, $updatable);
+    }
+
+    /**
+     * Löscht lokale Zeilen, die denselben Unique-Key wie eine Import-Zeile haben, aber einen anderen PK.
+     *
+     * @param  list<array<string, mixed>>  $records
+     * @param  list<string>  $primaryKey
+     */
+    private function clearUniqueConflicts(string $table, array $records, array $primaryKey): void
+    {
+        $uniqueIndexes = MiniApiSchemaGuard::uniqueIndexColumns($table);
+        if ($uniqueIndexes === []) {
+            return;
+        }
+
+        foreach ($records as $record) {
+            foreach ($uniqueIndexes as $columns) {
+                $query = DB::table($table);
+
+                foreach ($columns as $column) {
+                    if (! array_key_exists($column, $record)) {
+                        continue 2;
+                    }
+
+                    $query->where($column, $record[$column]);
+                }
+
+                foreach ($primaryKey as $pkColumn) {
+                    if (! array_key_exists($pkColumn, $record)) {
+                        continue 2;
+                    }
+
+                    $query->where($pkColumn, '!=', $record[$pkColumn]);
+                }
+
+                $query->delete();
+            }
+        }
     }
 
     /**
